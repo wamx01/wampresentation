@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Approval Center – Easy Guide</title>
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta name="description" content="Simple guide to our unified approval workflow: vacations, purchasing, scrap and more, with Teams/email notifications." />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+<header class="hero">
+  <h1>Approval Center</h1>
+  <p class="tagline">Vacations, purchasing, scrap – one simple path.</p>
+  <nav>
+    <a href="#how-it-works">How it works</a>
+    <a href="#flow">Flow</a>
+    <a href="#rules">Approver rules</a>
+    <a href="#statuses">Statuses</a>
+    <a href="#faq">FAQ</a>
+    <a href="#glossary">Glossary</a>
+  </nav>
+</header>
+<main>
+<section id="summary" class="card">
+  <h2>Executive Summary</h2>
+  <p>The system accepts any request type, applies rules to find approvers, notifies automatically, and records every decision until it finishes (Approved, Rejected, or Canceled).</p>
+</section>
+<section id="how-it-works" class="card">
+  <h2>How It Works (Plain English)</h2>
+  <ol>
+    <li><strong>Select the type</strong> (Vacation, Purchase, etc.).</li>
+    <li><strong>Enter details and upload files</strong> if needed.</li>
+    <li><strong>The system picks approvers</strong> using rules (e.g., SUPERVISOR).</li>
+    <li><strong>First approver is notified</strong> via email or Teams.</li>
+    <li><strong>Approve / Reject</strong>; if approved and there are more, it continues.</li>
+    <li><strong>It ends</strong>: Approved (all OK), Rejected (someone said NO), or Canceled (you stopped it).</li>
+    <li><strong>The related module is updated</strong> (e.g., leave marked as approved).</li>
+  </ol>
+</section>
+<section id="flow" class="card">
+  <h2>Visual Flow</h2>
+  <div class="timeline">
+    <div class="step"><span>1</span>Create</div>
+    <div class="step"><span>2</span>Resolve Rules</div>
+    <div class="step"><span>3</span>Notify</div>
+    <div class="step"><span>4</span>Decide</div>
+    <div class="step"><span>5</span>Finish</div>
+    <div class="step"><span>6</span>Record/Audit</div>
+  </div>
+</section>
+<section id="rules" class="card">
+  <h2>Approver Rules (Who approves)</h2>
+  <p>Instead of picking people one by one, we use texts that “mean” a specific person.</p>
+  <table>
+    <thead>
+      <tr><th>Rule</th><th>Meaning</th><th>Example</th></tr>
+    </thead>
+    <tbody>
+      <tr><td>SUPERVISOR</td><td>Your direct manager</td><td>SUPERVISOR</td></tr>
+      <tr><td>SUPERVISOR_2</td><td>Your manager’s manager</td><td>SUPERVISOR_2</td></tr>
+      <tr><td>DEPT_MANAGER</td><td>Manager of your department</td><td>DEPT_MANAGER:NAME=Sales</td></tr>
+      <tr><td>BUYER</td><td>Person authorized to buy</td><td>BUYER:CC=ADM-1001</td></tr>
+      <tr><td>CC_OWNER</td><td>Cost center owner</td><td>CC_OWNER:CC=ADM-1001</td></tr>
+      <tr><td>ROLE:Manager</td><td>First user with role “Manager”</td><td>ROLE:Manager</td></tr>
+      <tr><td>NOMINA:12345</td><td>Employee with payroll no. 12345</td><td>NOMINA:12345</td></tr>
+      <tr><td>USER:17</td><td>User with Id 17</td><td>USER:17</td></tr>
+      <tr><td>POSITION:Quality Engineer</td><td>Specific position</td><td>POSITION:Quality Engineer</td></tr>
+      <tr><td>CEO</td><td>Chief Executive Officer</td><td>CEO</td></tr>
+    </tbody>
+  </table>
+  <p class="note">If a rule doesn’t find a valid person, that step is skipped. If no rule resolves any approver, the request isn’t created.</p>
+</section>
+<section id="statuses" class="card">
+  <h2>Statuses</h2>
+  <div class="states">
+    <div class="state">
+      <h3>Request</h3>
+      <ul>
+        <li><strong>Pending:</strong> there are still approvers left.</li>
+        <li><strong>Approved:</strong> everyone approved.</li>
+        <li><strong>Rejected:</strong> someone said NO.</li>
+        <li><strong>Canceled:</strong> creator stopped it.</li>
+      </ul>
+    </div>
+    <div class="state">
+      <h3>Individual Step</h3>
+      <ul>
+        <li>Pending</li>
+        <li>Approved</li>
+        <li>Rejected</li>
+        <li>Reassigned</li>
+        <li>Canceled</li>
+      </ul>
+    </div>
+  </div>
+</section>
+<section id="webhook" class="card">
+  <h2>What is a Webhook?</h2>
+  <p>A “digital doorbell”. When something happens (new request, change, final decision), the system rings Power Automate or Teams. They can show cards or buttons so you can approve right there.</p>
+</section>
+<section id="security" class="card">
+  <h2>Files & Security</h2>
+  <p>Files are stored internally. To share them we generate temporary links with expiry (like keys that later lock), preventing unwanted access.</p>
+</section>
+<section id="faq" class="card">
+  <h2>FAQ</h2>
+  <details>
+    <summary>How do I know who is approving now?</summary>
+    <p>The screen shows the current approver, and notifications do too.</p>
+  </details>
+  <details>
+    <summary>Can I cancel?</summary>
+    <p>Yes, while it’s Pending and you are the creator.</p>
+  </details>
+  <details>
+    <summary>What if my manager changed?</summary>
+    <p>New requests recalculate. A pending one can be Reassigned.</p>
+  </details>
+  <details>
+    <summary>Can I approve from my phone?</summary>
+    <p>Yes, via the Teams card or email link.</p>
+  </details>
+  <details>
+    <summary>Is the rejector tracked?</summary>
+    <p>Everything is recorded with date and comment.</p>
+  </details>
+</section>
+<section id="glossary" class="card">
+  <h2>Glossary</h2>
+  <ul class="glossary">
+    <li><strong>Request:</strong> what you submit (vacation, purchase).</li>
+    <li><strong>Step:</strong> a single approval decision.</li>
+    <li><strong>Rule:</strong> text that defines who will approve.</li>
+    <li><strong>Webhook:</strong> automatic notification to another system.</li>
+    <li><strong>Reassign:</strong> change the approver for a step.</li>
+    <li><strong>Attachments:</strong> uploaded files.</li>
+    <li><strong>Comments:</strong> approval/rejection notes.</li>
+  </ul>
+</section>
+</main>
+<footer>
+  <p>© 2025 Internal Approval Center</p>
+</footer>
+<script src="script.js"></script>
+</body>
+</html>
