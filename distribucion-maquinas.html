@@ -23,6 +23,9 @@
       --radius:       10px;
       --shadow:       0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
       --shadow-md:    0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+      --team-color:   #6d28d9;
+      --team-bg:      #ede9fe;
+      --team-border:  #ddd6fe;
     }
 
     /* ===== Reset ===== */
@@ -208,6 +211,25 @@
       gap: .4rem;
     }
     .person-item span { flex: 1; font-size: .8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    .person-team-input {
+      width: 82px;
+      min-width: 60px;
+      flex-shrink: 0;
+      font-size: .68rem;
+      padding: .15rem .3rem;
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      color: var(--muted);
+      background: var(--surface2);
+    }
+    .person-team-input:focus { border-color: var(--primary); }
+    .person-team-input:not(:placeholder-shown) {
+      background: var(--team-bg);
+      color: var(--team-color);
+      border-color: var(--team-border);
+    }
+    .team-legend-dot { color: var(--team-color); }
 
     /* ===== Tables ===== */
     .table-wrap { overflow-x: auto; }
@@ -538,13 +560,17 @@
         <label>Nombre</label>
         <input type="text" id="inp-person-name" placeholder="Nombre completo">
       </div>
+      <div class="form-group" style="flex:2">
+        <label title="Deja vacío para distribución libre">Equipo pre-asignado (opcional)</label>
+        <input type="text" id="inp-person-team" placeholder="Ej: Equipo A">
+      </div>
       <button class="btn btn-primary" id="btn-add-person">+ Agregar</button>
     </div>
 
     <!-- Pegar lista -->
     <div class="form-group mb-1">
       <label>Pegar lista (un nombre por línea)</label>
-      <textarea id="inp-paste" placeholder="Juan García&#10;María López&#10;Carlos Martínez&#10;..."></textarea>
+      <textarea id="inp-paste" placeholder="Juan García&#10;María López | Equipo A&#10;Carlos Martínez | Equipo A&#10;Ana Torres&#10;...&#10;(formato: Nombre | Equipo pre-asignado)"></textarea>
     </div>
 
     <div class="form-row mb-1">
@@ -561,6 +587,7 @@
     </div>
     <p class="mt-05 text-muted" style="font-size:.78rem">
       Total: <strong id="people-count">0</strong> personas
+      &nbsp;·&nbsp; <span class="team-legend-dot">■</span> Equipo pre-asignado (la persona se fija en ese grupo al distribuir)
     </p>
   </div><!-- /tab-personas -->
 
@@ -686,6 +713,13 @@
 let _uid = 1;
 const uid = () => _uid++;
 
+/** Normaliza el nombre de equipo: recorta espacios y devuelve null si está vacío */
+function normalizeTeamName(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+}
+
 /** Formatea número como moneda */
 function fmt(n) {
   if (n == null || !isFinite(n)) return '—';
@@ -777,14 +811,14 @@ function totalCost(machine) {
 /*  PERSONAS                                                           */
 /* ------------------------------------------------------------------ */
 
-function addPerson(name) {
+function addPerson(name, fixedGroupName) {
   name = name.trim();
   if (!name) return false;
   if (state.people.some(p => p.name.toLowerCase() === name.toLowerCase())) {
     toast(`"${name}" ya existe en la lista`, 'warning');
     return false;
   }
-  state.people.push({ id: uid(), name });
+  state.people.push({ id: uid(), name, fixedGroupName: normalizeTeamName(fixedGroupName) });
   renderPeople();
   updateBadges();
   return true;
@@ -797,6 +831,11 @@ function removePerson(id) {
   renderPeople();
   renderGroups();
   updateBadges();
+}
+
+function setPersonTeam(id, teamName) {
+  const p = state.people.find(p => p.id === id);
+  if (p) p.fixedGroupName = normalizeTeamName(teamName);
 }
 
 function renderPeople() {
@@ -813,6 +852,11 @@ function renderPeople() {
   container.innerHTML = state.people.map(p => `
     <div class="person-item">
       <span title="${esc(p.name)}">${esc(p.name)}</span>
+      <input type="text" class="person-team-input"
+             value="${esc(p.fixedGroupName || '')}"
+             placeholder="Equipo…"
+             title="Equipo pre-asignado — déjalo vacío para distribución libre"
+             onchange="setPersonTeam(${p.id}, this.value)">
       <button class="btn btn-danger btn-sm" onclick="removePerson(${p.id})" title="Eliminar">✕</button>
     </div>`).join('');
 }
@@ -901,43 +945,79 @@ function autoCreateGroups() {
   if (!state.people.length)   { toast('Agrega personas primero', 'error');     return false; }
 
   const numMachines = state.machines.length;
-  const numGroups   = cfgN > 0 ? cfgN : numMachines;
-  const n           = state.people.length;
 
-  // Ordenar máquinas por costo descendente para alinear con los tamaños óptimos
+  // ── Separate people into pre-assigned (fixed) and free ──────────────────
+  const fixedMap = new Map(); // normalised key → { displayName, people[] }
+  const freePeople = [];
+  state.people.forEach(p => {
+    if (p.fixedGroupName && p.fixedGroupName.trim()) {
+      const key = p.fixedGroupName.trim().toLowerCase();
+      if (!fixedMap.has(key)) fixedMap.set(key, { displayName: p.fixedGroupName.trim(), people: [] });
+      fixedMap.get(key).people.push(p);
+    } else {
+      freePeople.push(p);
+    }
+  });
+
+  const fixedEntries   = [...fixedMap.values()];
+  const numFixedGroups = fixedEntries.length;
+  const totalGroups    = cfgN > 0 ? cfgN : numMachines;
+  const numFreeGroups  = Math.max(0, totalGroups - numFixedGroups);
+
+  // Ordenar máquinas por costo descendente
   const sortedMachines = [...state.machines]
-    .slice(0, numGroups)
+    .slice(0, totalGroups)
     .sort((a, b) => totalCost(b) - totalCost(a));
 
-  const costs = sortedMachines.map(m => totalCost(m));
-
-  // Advertir si el tamaño promedio supera el máximo absoluto
-  const avgSize = n / numGroups;
-  if (avgSize > absMaxGroupSize) {
-    toast(
-      `⚠ Con ${n} personas y ${numGroups} grupos el promedio es ${avgSize.toFixed(1)} > máx. absoluto ${absMaxGroupSize}. Se crearán grupos más grandes.`,
-      'warning'
-    );
+  // Advertir si el tamaño promedio de los grupos libres supera el máximo
+  if (numFreeGroups > 0) {
+    const avgFreeSize = freePeople.length / numFreeGroups;
+    if (avgFreeSize > absMaxGroupSize) {
+      toast(
+        `⚠ Con ${freePeople.length} personas libres y ${numFreeGroups} grupos libres el promedio es ${avgFreeSize.toFixed(1)} > máx. absoluto ${absMaxGroupSize}. Se crearán grupos más grandes.`,
+        'warning'
+      );
+    }
   }
-
-  // Tamaños proporcionales a costos (Hamilton + ascenso de colina)
-  const sizes = computeProportionalSizes(costs, n, minGroupSize, absMaxGroupSize);
-
-  // Mezclar personas aleatoriamente
-  const shuffled = [...state.people].sort(() => Math.random() - 0.5);
 
   state.groups = [];
-  let idx = 0;
-  for (let i = 0; i < numGroups; i++) {
-    const size = i < sizes.length ? sizes[i] : 0;
+
+  // 1. Crear grupos pre-asignados (equipo fijo) ──────────────────────────
+  fixedEntries.forEach(fg => {
     state.groups.push({
       id:        uid(),
-      name:      `Grupo ${i + 1}`,
-      memberIds: shuffled.slice(idx, idx + size).map(p => p.id),
+      name:      fg.displayName,
+      memberIds: fg.people.map(p => p.id),
       machineId: null
     });
-    idx += size;
+  });
+
+  // 2. Crear grupos libres y distribuir las personas sin equipo ───────────
+  if (numFreeGroups > 0) {
+    const freeMachineCosts = sortedMachines.slice(numFixedGroups).map(m => totalCost(m));
+    let sizes;
+    if (freePeople.length > 0 && freeMachineCosts.length > 0) {
+      sizes = computeProportionalSizes(freeMachineCosts, freePeople.length, minGroupSize, absMaxGroupSize);
+    } else if (freePeople.length > 0) {
+      sizes = distributeEvenSizes(freePeople.length, numFreeGroups);
+    } else {
+      sizes = new Array(numFreeGroups).fill(0);
+    }
+
+    const shuffled = [...freePeople].sort(() => Math.random() - 0.5);
+    let idx = 0;
+    for (let i = 0; i < numFreeGroups; i++) {
+      const size = i < sizes.length ? (sizes[i] || 0) : 0;
+      state.groups.push({
+        id:        uid(),
+        name:      `Grupo ${numFixedGroups + i + 1}`,
+        memberIds: shuffled.slice(idx, idx + size).map(p => p.id),
+        machineId: null
+      });
+      idx += size;
+    }
   }
+
   return true;
 }
 
@@ -1154,18 +1234,55 @@ function removePersonFromGroup(personId) {
 
 /** Distribuye las personas en los grupos existentes usando tamaños proporcionales
  *  al costo de la máquina asignada a cada grupo (si la hay); en caso contrario,
- *  distribuye de forma uniforme. */
+ *  distribuye de forma uniforme.
+ *  Las personas con equipo pre-asignado se fijan al grupo cuyo nombre coincide;
+ *  las demás se distribuyen libremente. */
 function autoDistribute() {
   readConfig();
-  const { minGroupSize, absMaxGroupSize } = state.config;
+  const { absMaxGroupSize } = state.config;
   if (!state.groups.length) { toast('Crea al menos un grupo primero', 'error'); return; }
   if (!state.people.length) { toast('Agrega personas primero', 'error'); return; }
 
-  const total = state.people.length;
+  // ── Separar personas en pre-asignadas (fijas) y libres ──────────────────
+  const freePeople  = state.people.filter(p => !(p.fixedGroupName && p.fixedGroupName.trim()));
+  const fixedPeople = state.people.filter(p =>   p.fixedGroupName && p.fixedGroupName.trim());
+
+  // Vaciar todos los grupos
+  state.groups.forEach(g => (g.memberIds = []));
+
+  // Colocar personas fijas en el grupo que tenga el mismo nombre (sin distinción
+  // de mayúsculas). Las que no encuentren coincidencia se tratan como libres.
+  const unmatched = [];
+  fixedPeople.forEach(p => {
+    const key   = (p.fixedGroupName || '').trim().toLowerCase();
+    const group = state.groups.find(g => g.name.trim().toLowerCase() === key);
+    if (group) {
+      if (!group.memberIds.includes(p.id)) group.memberIds.push(p.id);
+    } else {
+      unmatched.push(p);
+    }
+  });
+
+  if (unmatched.length) {
+    toast(
+      `⚠ ${unmatched.length} persona(s) con equipo pre-asignado no encontraron un grupo con ese nombre y serán distribuidas libremente.`,
+      'warning'
+    );
+  }
+
+  // Distribuir personas libres (y las que no encontraron grupo) al resto de grupos
+  const toDistribute = [...freePeople, ...unmatched].sort(() => Math.random() - 0.5);
+
+  if (!toDistribute.length) {
+    renderGroups();
+    toast('Personas distribuidas en sus equipos pre-asignados ✔', 'success');
+    return;
+  }
+
+  const total = toDistribute.length;
   const ng    = state.groups.length;
 
-  // Obtener costos asignados a cada grupo (null si no tiene máquina)
-  const groupCosts = state.groups.map(g => {
+  const groupCosts  = state.groups.map(g => {
     const m = g.machineId ? state.machines.find(m => m.id === g.machineId) : null;
     return m ? totalCost(m) : null;
   });
@@ -1173,19 +1290,18 @@ function autoDistribute() {
 
   let sizes;
   if (allAssigned) {
-    sizes = computeProportionalSizes(groupCosts, total, minGroupSize, absMaxGroupSize);
+    sizes = computeProportionalSizes(groupCosts, total, 0, absMaxGroupSize);
   } else {
     sizes = distributeEvenSizes(total, ng);
   }
 
-  state.groups.forEach(g => (g.memberIds = []));
-  const shuffled = [...state.people].sort(() => Math.random() - 0.5);
-
   let idx = 0;
   state.groups.forEach((g, i) => {
-    g.memberIds = shuffled.slice(idx, idx + sizes[i]).map(p => p.id);
-    idx += sizes[i];
+    const extra = sizes[i] || 0;
+    g.memberIds.push(...toDistribute.slice(idx, idx + extra).map(p => p.id));
+    idx += extra;
   });
+
   renderGroups();
   toast(
     allAssigned
@@ -1669,10 +1785,18 @@ function updateBadges() {
 /* ------------------------------------------------------------------ */
 
 function loadSampleData() {
-  /* 52 personas */
-  const names = [
-    'Ana García','Carlos López','María Martínez','José Hernández','Laura González',
-    'Miguel Rodríguez','Sofía Pérez','David Sánchez','Elena Ramírez','Luis Torres',
+  /* 52 personas — las primeras 8 ya tienen equipo pre-asignado */
+  const people = [
+    { name: 'Ana García',           fixedGroupName: 'Equipo Alpha' },
+    { name: 'Carlos López',         fixedGroupName: 'Equipo Alpha' },
+    { name: 'María Martínez',       fixedGroupName: 'Equipo Alpha' },
+    { name: 'José Hernández',       fixedGroupName: 'Equipo Alpha' },
+    { name: 'Laura González',       fixedGroupName: 'Equipo Beta'  },
+    { name: 'Miguel Rodríguez',     fixedGroupName: 'Equipo Beta'  },
+    { name: 'Sofía Pérez',          fixedGroupName: 'Equipo Beta'  },
+    { name: 'David Sánchez',        fixedGroupName: 'Equipo Beta'  },
+    // Las siguientes 44 personas no tienen equipo pre-asignado
+    'Elena Ramírez','Luis Torres',
     'Isabel Flores','Roberto Díaz','Patricia Cruz','Fernando Morales','Carmen Jiménez',
     'Alejandro Reyes','Valeria Ortiz','Ricardo Gutiérrez','Adriana Vargas','Sergio Ramos',
     'Claudia Moreno','Héctor Mendoza','Gabriela Castillo','Ernesto Silva','Verónica Herrera',
@@ -1696,7 +1820,11 @@ function loadSampleData() {
     { name: 'Soldadora MIG/MAG Industrial',   baseCost:  38000, transportCost:  2500 }
   ];
 
-  state.people   = names.map(n => ({ id: uid(), name: n }));
+  state.people   = people.map(p =>
+    typeof p === 'string'
+      ? { id: uid(), name: p, fixedGroupName: null }
+      : { id: uid(), name: p.name, fixedGroupName: p.fixedGroupName || null }
+  );
   state.machines = machines.map(m => ({ id: uid(), ...m }));
   state.groups   = [];
   state.results  = null;
@@ -1706,7 +1834,7 @@ function loadSampleData() {
   renderGroups();
   renderResults(null);
   updateBadges();
-  toast('✅ Datos de ejemplo cargados: 52 personas · 8 máquinas', 'success');
+  toast('✅ Datos de ejemplo cargados: 52 personas (8 con equipo pre-asignado) · 8 máquinas', 'success');
 }
 
 /* ------------------------------------------------------------------ */
@@ -1740,9 +1868,11 @@ document.addEventListener('DOMContentLoaded', () => {
 
   /* --- Personas: agregar uno a uno --- */
   const inpPersonName = document.getElementById('inp-person-name');
+  const inpPersonTeam = document.getElementById('inp-person-team');
   document.getElementById('btn-add-person').addEventListener('click', () => {
-    if (addPerson(inpPersonName.value)) {
+    if (addPerson(inpPersonName.value, inpPersonTeam.value)) {
       inpPersonName.value = '';
+      inpPersonTeam.value = '';
       inpPersonName.focus();
     }
   });
@@ -1757,7 +1887,12 @@ document.addEventListener('DOMContentLoaded', () => {
       .map(l => l.trim())
       .filter(Boolean);
     let added = 0;
-    lines.forEach(n => { if (addPerson(n)) added++; });
+    lines.forEach(line => {
+      const parts = line.split('|').map(s => s.trim());
+      const name  = parts[0];
+      const team  = parts[1] || null;
+      if (addPerson(name, team)) added++;
+    });
     document.getElementById('inp-paste').value = '';
     if (added) toast(`${added} persona(s) importada(s)`, 'success');
   });
