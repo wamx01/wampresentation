@@ -1448,7 +1448,7 @@ function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tol
   const countOutsideTolerance = pctDeviations.filter(value => Math.abs(value) > tolerancePercent + 1e-9).length;
 
   return {
-    machineIndices,
+    machineIndices: [...machineIndices],
     cppValues,
     globalAvg,
     variance,
