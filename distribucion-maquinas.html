@@ -1266,10 +1266,40 @@ function autoCreateGroups() {
       sizes = new Array(numFreeGroups).fill(0);
     }
 
+    const baseSizes = [
+      ...establishedEntries.map(fg => fg.people.length),
+      ...new Array(numFreeGroups).fill(0)
+    ];
+    const initialTotals = baseSizes.map((base, idx) => base + (sizes[idx - numFixedGroups] || 0));
+    const minTotals = [
+      ...establishedEntries.map(fg => fg.people.length),
+      ...sizes.map(size => size > 0 ? Math.min(minGroupSize, size) : 0)
+    ];
+    const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
+    const optimized = optimizeGroupSizesIterative(
+      initialTotals,
+      minTotals,
+      maxTotals,
+      state.machines.map(m => totalCost(m)),
+      state.config.tolerancePercent
+    );
+    const targetTotals = optimized.sizes;
+
     const shuffled = [...freePeople].sort(() => Math.random() - 0.5);
     let idx = 0;
+
+    state.groups.forEach((group, groupIdx) => {
+      const currentSize = group.memberIds.length;
+      const targetSize = targetTotals[groupIdx] || currentSize;
+      const extraNeeded = Math.max(0, targetSize - currentSize);
+      if (extraNeeded > 0) {
+        group.memberIds.push(...shuffled.slice(idx, idx + extraNeeded).map(p => p.id));
+        idx += extraNeeded;
+      }
+    });
+
     for (let i = 0; i < numFreeGroups; i++) {
-      const size = i < sizes.length ? (sizes[i] || 0) : 0;
+      const size = targetTotals[numFixedGroups + i] || 0;
       state.groups.push({
         id:        uid(),
         name:      `Grupo ${numFixedGroups + i + 1}`,
@@ -1395,6 +1425,154 @@ function computeProportionalSizes(costs, total, minSize, maxSize) {
 }
 
 /**
+ * Evalúa una asignación de máquinas para una combinación de tamaños.
+ * Retorna métricas para comparar qué reparto se acerca más a la tolerancia.
+ */
+function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tolerancePercent = state.config.tolerancePercent) {
+  const activeSizes = groupSizes.slice(0, machineIndices.length);
+  const selectedCosts = machineIndices.map(i => machineCosts[i]);
+  const totalPeople = activeSizes.reduce((sum, size) => sum + size, 0);
+  const totalCostVal = selectedCosts.reduce((sum, cost) => sum + cost, 0);
+  const globalAvg = totalPeople > 0 ? totalCostVal / totalPeople : 0;
+  const cppValues = selectedCosts.map((cost, idx) => activeSizes[idx] > 0 ? cost / activeSizes[idx] : 0);
+  const avgCpp = cppValues.length ? cppValues.reduce((sum, value) => sum + value, 0) / cppValues.length : 0;
+  const variance = cppValues.length
+    ? cppValues.reduce((sum, value) => sum + (value - avgCpp) ** 2, 0) / cppValues.length
+    : 0;
+  const stdDev = Math.sqrt(variance);
+  const cvPct = globalAvg > 0 ? (stdDev / globalAvg) * 100 : 0;
+  const pctDeviations = cppValues.map(value => globalAvg > 0 ? ((value - globalAvg) / globalAvg) * 100 : 0);
+  const maxPctDeviation = pctDeviations.length
+    ? Math.max(...pctDeviations.map(value => Math.abs(value)))
+    : 0;
+  const countOutsideTolerance = pctDeviations.filter(value => Math.abs(value) > tolerancePercent + 1e-9).length;
+
+  return {
+    machineIndices,
+    cppValues,
+    globalAvg,
+    variance,
+    stdDev,
+    cvPct,
+    pctDeviations,
+    maxPctDeviation,
+    countOutsideTolerance
+  };
+}
+
+function compareAssignments(candidate, current) {
+  if (!current) return -1;
+  if (candidate.countOutsideTolerance !== current.countOutsideTolerance) {
+    return candidate.countOutsideTolerance - current.countOutsideTolerance;
+  }
+  if (Math.abs(candidate.maxPctDeviation - current.maxPctDeviation) > 1e-9) {
+    return candidate.maxPctDeviation - current.maxPctDeviation;
+  }
+  if (Math.abs(candidate.cvPct - current.cvPct) > 1e-9) {
+    return candidate.cvPct - current.cvPct;
+  }
+  return candidate.variance - current.variance;
+}
+
+/**
+ * Busca la mejor asignación de máquinas posible para los tamaños indicados.
+ * Usa búsqueda exacta para casos pequeños y greedy para los grandes.
+ */
+function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent = state.config.tolerancePercent) {
+  const n = Math.min(groupSizes.length, machineCosts.length);
+  if (!n) return null;
+
+  const activeSizes = groupSizes.slice(0, n);
+  let best = null;
+
+  if (n <= 8 && machineCosts.length <= 10) {
+    const used = new Array(machineCosts.length).fill(false);
+
+    function search(selection) {
+      if (selection.length === n) {
+        const candidate = evaluateMachineAssignment(activeSizes, selection, machineCosts, tolerancePercent);
+        if (compareAssignments(candidate, best) < 0) best = candidate;
+        return;
+      }
+      for (let i = 0; i < machineCosts.length; i++) {
+        if (used[i]) continue;
+        used[i] = true;
+        selection.push(i);
+        search(selection);
+        selection.pop();
+        used[i] = false;
+      }
+    }
+
+    search([]);
+  } else {
+    const sortedMachineIdx = machineCosts
+      .map((cost, idx) => ({ cost, idx }))
+      .sort((a, b) => b.cost - a.cost)
+      .slice(0, n)
+      .map(item => item.idx);
+
+    const sortedGroupIdx = activeSizes
+      .map((size, idx) => ({ size, idx }))
+      .sort((a, b) => b.size - a.size)
+      .map(item => item.idx);
+
+    const assignment = new Array(n);
+    for (let i = 0; i < n; i++) assignment[sortedGroupIdx[i]] = sortedMachineIdx[i];
+    best = evaluateMachineAssignment(activeSizes, assignment, machineCosts, tolerancePercent);
+  }
+
+  return best;
+}
+
+/**
+ * Itera combinaciones de tamaños moviendo una persona entre grupos hasta
+ * acercarse lo más posible al rango de tolerancia configurado.
+ */
+function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCosts, tolerancePercent) {
+  let sizes = [...initialSizes];
+  let bestEval = findBestMachineAssignment(sizes, machineCosts, tolerancePercent);
+  if (!bestEval) return { sizes, evaluation: null, iterations: 0 };
+
+  let iterations = 0;
+  let improved = true;
+  const n = sizes.length;
+
+  while (improved && iterations < 250) {
+    improved = false;
+    let bestMove = null;
+
+    for (let from = 0; from < n; from++) {
+      if (sizes[from] <= minSizes[from]) continue;
+      for (let to = 0; to < n; to++) {
+        if (from === to) continue;
+        if (maxSizes[to] > 0 && sizes[to] >= maxSizes[to]) continue;
+
+        const candidateSizes = [...sizes];
+        candidateSizes[from]--;
+        candidateSizes[to]++;
+
+        const candidateEval = findBestMachineAssignment(candidateSizes, machineCosts, tolerancePercent);
+        if (!candidateEval) continue;
+        if (compareAssignments(candidateEval, bestEval) < 0) {
+          bestMove = { sizes: candidateSizes, evaluation: candidateEval };
+          bestEval = candidateEval;
+          improved = true;
+        }
+      }
+    }
+
+    if (bestMove) {
+      sizes = bestMove.sizes;
+      iterations++;
+      if (bestMove.evaluation.countOutsideTolerance === 0) break;
+    }
+  }
+
+  return { sizes, evaluation: bestEval, iterations };
+}
+
+/**
  * Asigna máquinas a grupos buscando minimizar la varianza del costo/persona.
  * - N ≤ 12: búsqueda exhaustiva (N! permutaciones).
  * - N > 12: greedy (mayor costo → mayor grupo, desigualdad de reordenamiento).
@@ -1403,62 +1581,19 @@ function assignMachinesOptimal() {
   const groups   = state.groups;
   const machines = state.machines;
   const n        = Math.min(groups.length, machines.length);
-  if (!n) return;
+  if (!n) return null;
 
   const gSizes = groups.slice(0, n).map(g => g.memberIds.length);
-  const mCosts = machines.slice(0, n).map(m => totalCost(m));
-
-  let bestAssign; // bestAssign[groupIdx] = machineIdx
-
-  if (n <= 12) {
-    /* --- Búsqueda exhaustiva: todas las permutaciones de índices de máquinas --- */
-    let bestVar = Infinity;
-    const machIdx = Array.from({ length: n }, (_, i) => i);
-
-    function permute(perm, used) {
-      if (perm.length === n) {
-        // costo por persona para esta asignación
-        let sum = 0;
-        const cpp = perm.map((mi, gi) => {
-          const v = gSizes[gi] > 0 ? mCosts[mi] / gSizes[gi] : 0;
-          sum += v;
-          return v;
-        });
-        const avg = sum / n;
-        let variance = 0;
-        for (let i = 0; i < n; i++) variance += (cpp[i] - avg) ** 2;
-        if (variance < bestVar) { bestVar = variance; bestAssign = [...perm]; }
-        return;
-      }
-      for (let i = 0; i < n; i++) {
-        if (!used[i]) {
-          used[i] = true;
-          perm.push(i);
-          permute(perm, used);
-          perm.pop();
-          used[i] = false;
-        }
-      }
-    }
-
-    permute([], new Array(n).fill(false));
-
-  } else {
-    /* --- Greedy: parear máquina más cara con grupo más grande --- */
-    const sortedM = mCosts
-      .map((c, i) => ({ c, i })).sort((a, b) => b.c - a.c).map(x => x.i);
-    const sortedG = gSizes
-      .map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s).map(x => x.i);
-
-    bestAssign = new Array(n);
-    for (let i = 0; i < n; i++) bestAssign[sortedG[i]] = sortedM[i];
-  }
+  const mCosts = machines.map(m => totalCost(m));
+  const bestAssign = findBestMachineAssignment(gSizes, mCosts);
+  if (!bestAssign) return null;
 
   // Aplicar la mejor asignación encontrada
   groups.forEach(g => (g.machineId = null));
   for (let i = 0; i < n; i++) {
-    groups[i].machineId = machines[bestAssign[i]].id;
+    groups[i].machineId = machines[bestAssign.machineIndices[i]].id;
   }
+  return bestAssign;
 }
 
 /* --- CRUD manual de grupos --- */
@@ -1557,9 +1692,22 @@ function autoDistribute() {
     sizes = distributeEvenSizes(total, ng);
   }
 
+  const baseSizes = state.groups.map(g => g.memberIds.length);
+  const initialTotals = baseSizes.map((base, idx) => base + (sizes[idx] || 0));
+  const minTotals = baseSizes.map((base, idx) => base + (base === 0 && (sizes[idx] || 0) > 0 ? 1 : 0));
+  const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
+  const optimized = optimizeGroupSizesIterative(
+    initialTotals,
+    minTotals,
+    maxTotals,
+    state.machines.map(m => totalCost(m)),
+    state.config.tolerancePercent
+  );
+  const targetTotals = optimized.sizes;
+
   let idx = 0;
   state.groups.forEach((g, i) => {
-    const extra = sizes[i] || 0;
+    const extra = Math.max(0, (targetTotals[i] || g.memberIds.length) - g.memberIds.length);
     g.memberIds.push(...toDistribute.slice(idx, idx + extra).map(p => p.id));
     idx += extra;
   });
