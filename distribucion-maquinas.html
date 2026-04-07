@@ -23,6 +23,9 @@
       --radius:       10px;
       --shadow:       0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
       --shadow-md:    0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+      --team-color:   #6d28d9;
+      --team-bg:      #ede9fe;
+      --team-border:  #ddd6fe;
     }
 
     /* ===== Reset ===== */
@@ -222,10 +225,11 @@
     }
     .person-team-input:focus { border-color: var(--primary); }
     .person-team-input:not(:placeholder-shown) {
-      background: #ede9fe;
-      color: #6d28d9;
-      border-color: #ddd6fe;
+      background: var(--team-bg);
+      color: var(--team-color);
+      border-color: var(--team-border);
     }
+    .team-legend-dot { color: var(--team-color); }
 
     /* ===== Tables ===== */
     .table-wrap { overflow-x: auto; }
@@ -583,7 +587,7 @@
     </div>
     <p class="mt-05 text-muted" style="font-size:.78rem">
       Total: <strong id="people-count">0</strong> personas
-      &nbsp;·&nbsp; <span style="color:#6d28d9">■</span> Equipo pre-asignado (la persona se fija en ese grupo al distribuir)
+      &nbsp;·&nbsp; <span class="team-legend-dot">■</span> Equipo pre-asignado (la persona se fija en ese grupo al distribuir)
     </p>
   </div><!-- /tab-personas -->
 
@@ -709,6 +713,13 @@
 let _uid = 1;
 const uid = () => _uid++;
 
+/** Normaliza el nombre de equipo: recorta espacios y devuelve null si está vacío */
+function normalizeTeamName(value) {
+  if (value == null) return null;
+  const trimmed = String(value).trim();
+  return trimmed || null;
+}
+
 /** Formatea número como moneda */
 function fmt(n) {
   if (n == null || !isFinite(n)) return '—';
@@ -807,7 +818,7 @@ function addPerson(name, fixedGroupName) {
     toast(`"${name}" ya existe en la lista`, 'warning');
     return false;
   }
-  state.people.push({ id: uid(), name, fixedGroupName: (fixedGroupName || '').trim() || null });
+  state.people.push({ id: uid(), name, fixedGroupName: normalizeTeamName(fixedGroupName) });
   renderPeople();
   updateBadges();
   return true;
@@ -824,7 +835,7 @@ function removePerson(id) {
 
 function setPersonTeam(id, teamName) {
   const p = state.people.find(p => p.id === id);
-  if (p) p.fixedGroupName = teamName.trim() || null;
+  if (p) p.fixedGroupName = normalizeTeamName(teamName);
 }
 
 function renderPeople() {
@@ -939,7 +950,7 @@ function autoCreateGroups() {
   const fixedMap = new Map(); // normalised key → { displayName, people[] }
   const freePeople = [];
   state.people.forEach(p => {
-    if (p.fixedGroupName) {
+    if (p.fixedGroupName && p.fixedGroupName.trim()) {
       const key = p.fixedGroupName.trim().toLowerCase();
       if (!fixedMap.has(key)) fixedMap.set(key, { displayName: p.fixedGroupName.trim(), people: [] });
       fixedMap.get(key).people.push(p);
@@ -1233,8 +1244,8 @@ function autoDistribute() {
   if (!state.people.length) { toast('Agrega personas primero', 'error'); return; }
 
   // ── Separar personas en pre-asignadas (fijas) y libres ──────────────────
-  const freePeople  = state.people.filter(p => !p.fixedGroupName);
-  const fixedPeople = state.people.filter(p =>  p.fixedGroupName);
+  const freePeople  = state.people.filter(p => !(p.fixedGroupName && p.fixedGroupName.trim()));
+  const fixedPeople = state.people.filter(p =>   p.fixedGroupName && p.fixedGroupName.trim());
 
   // Vaciar todos los grupos
   state.groups.forEach(g => (g.memberIds = []));
@@ -1243,7 +1254,7 @@ function autoDistribute() {
   // de mayúsculas). Las que no encuentren coincidencia se tratan como libres.
   const unmatched = [];
   fixedPeople.forEach(p => {
-    const key   = p.fixedGroupName.trim().toLowerCase();
+    const key   = (p.fixedGroupName || '').trim().toLowerCase();
     const group = state.groups.find(g => g.name.trim().toLowerCase() === key);
     if (group) {
       if (!group.memberIds.includes(p.id)) group.memberIds.push(p.id);
