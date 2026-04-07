@@ -938,6 +938,11 @@ const state = {
   mode: 'auto'  // 'auto' | 'manual'
 };
 
+const FLOATING_POINT_EPSILON = 1e-9;
+const MAX_GROUPS_FOR_EXHAUSTIVE_SEARCH = 8;
+const MAX_MACHINES_FOR_EXHAUSTIVE_SEARCH = 10;
+const MAX_SIZE_OPTIMIZATION_ITERATIONS = 250;
+
 /** Lee la configuración del DOM hacia state.config */
 function readConfig() {
   state.config.numGroups        = Math.max(0, parseInt(document.getElementById('cfg-numGroups').value)   || 0);
@@ -1270,7 +1275,10 @@ function autoCreateGroups() {
       ...establishedEntries.map(fg => fg.people.length),
       ...new Array(numFreeGroups).fill(0)
     ];
-    const initialTotals = baseSizes.map((base, idx) => base + (sizes[idx - numFixedGroups] || 0));
+    const initialTotals = [
+      ...establishedEntries.map(fg => fg.people.length),
+      ...sizes
+    ];
     const minTotals = [
       ...establishedEntries.map(fg => fg.people.length),
       ...sizes.map(size => size > 0 ? Math.min(minGroupSize, size) : 0)
@@ -1435,9 +1443,8 @@ function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tol
   const totalCostVal = selectedCosts.reduce((sum, cost) => sum + cost, 0);
   const globalAvg = totalPeople > 0 ? totalCostVal / totalPeople : 0;
   const cppValues = selectedCosts.map((cost, idx) => activeSizes[idx] > 0 ? cost / activeSizes[idx] : 0);
-  const avgCpp = cppValues.length ? cppValues.reduce((sum, value) => sum + value, 0) / cppValues.length : 0;
   const variance = cppValues.length
-    ? cppValues.reduce((sum, value) => sum + (value - avgCpp) ** 2, 0) / cppValues.length
+    ? cppValues.reduce((sum, value) => sum + (value - globalAvg) ** 2, 0) / cppValues.length
     : 0;
   const stdDev = Math.sqrt(variance);
   const cvPct = globalAvg > 0 ? (stdDev / globalAvg) * 100 : 0;
@@ -1445,7 +1452,7 @@ function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tol
   const maxPctDeviation = pctDeviations.length
     ? Math.max(...pctDeviations.map(value => Math.abs(value)))
     : 0;
-  const countOutsideTolerance = pctDeviations.filter(value => Math.abs(value) > tolerancePercent + 1e-9).length;
+  const countOutsideTolerance = pctDeviations.filter(value => Math.abs(value) > tolerancePercent + FLOATING_POINT_EPSILON).length;
 
   return {
     machineIndices: [...machineIndices],
@@ -1465,10 +1472,10 @@ function compareAssignments(candidate, current) {
   if (candidate.countOutsideTolerance !== current.countOutsideTolerance) {
     return candidate.countOutsideTolerance - current.countOutsideTolerance;
   }
-  if (Math.abs(candidate.maxPctDeviation - current.maxPctDeviation) > 1e-9) {
+  if (Math.abs(candidate.maxPctDeviation - current.maxPctDeviation) > FLOATING_POINT_EPSILON) {
     return candidate.maxPctDeviation - current.maxPctDeviation;
   }
-  if (Math.abs(candidate.cvPct - current.cvPct) > 1e-9) {
+  if (Math.abs(candidate.cvPct - current.cvPct) > FLOATING_POINT_EPSILON) {
     return candidate.cvPct - current.cvPct;
   }
   return candidate.variance - current.variance;
@@ -1485,7 +1492,7 @@ function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent = 
   const activeSizes = groupSizes.slice(0, n);
   let best = null;
 
-  if (n <= 8 && machineCosts.length <= 10) {
+  if (n <= MAX_GROUPS_FOR_EXHAUSTIVE_SEARCH && machineCosts.length <= MAX_MACHINES_FOR_EXHAUSTIVE_SEARCH) {
     const used = new Array(machineCosts.length).fill(false);
 
     function search(selection) {
@@ -1538,7 +1545,7 @@ function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCo
   let improved = true;
   const n = sizes.length;
 
-  while (improved && iterations < 250) {
+  while (improved && iterations < MAX_SIZE_OPTIMIZATION_ITERATIONS) {
     improved = false;
     let bestMove = null;
 
@@ -1694,6 +1701,8 @@ function autoDistribute() {
 
   const baseSizes = state.groups.map(g => g.memberIds.length);
   const initialTotals = baseSizes.map((base, idx) => base + (sizes[idx] || 0));
+  // Si un grupo libre ya iba a recibir personas, mantenlo al menos con 1 para
+  // no vaciarlo durante la optimización y desperdiciar una máquina asignable.
   const minTotals = baseSizes.map((base, idx) => base + (base === 0 && (sizes[idx] || 0) > 0 ? 1 : 0));
   const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
   const optimized = optimizeGroupSizesIterative(
