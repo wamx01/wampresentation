@@ -1439,7 +1439,8 @@ function computeProportionalSizes(costs, total, minSize, maxSize) {
  * Evalúa una asignación de máquinas para una combinación de tamaños.
  * Retorna métricas para comparar qué reparto se acerca más a la tolerancia.
  */
-function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tolerancePercent = state.config.tolerancePercent) {
+function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tolerancePercent) {
+  const tolerance = Number.isFinite(tolerancePercent) ? tolerancePercent : (state.config?.tolerancePercent ?? 20);
   const activeSizes = groupSizes.slice(0, machineIndices.length);
   const selectedCosts = machineIndices.map(i => machineCosts[i]);
   const totalPeople = activeSizes.reduce((sum, size) => sum + size, 0);
@@ -1456,7 +1457,7 @@ function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tol
     ? Math.max(...pctDeviations.map(value => Math.abs(value)))
     : 0;
   const countOutsideTolerance = pctDeviations.reduce(
-    (count, value) => count + (Math.abs(value) > tolerancePercent + FLOATING_POINT_EPSILON ? 1 : 0),
+    (count, value) => count + (Math.abs(value) > tolerance + FLOATING_POINT_EPSILON ? 1 : 0),
     0
   );
 
@@ -1491,7 +1492,8 @@ function compareAssignments(candidate, current) {
  * Busca la mejor asignación de máquinas posible para los tamaños indicados.
  * Usa búsqueda exacta para casos pequeños y greedy para los grandes.
  */
-function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent = state.config.tolerancePercent) {
+function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent) {
+  const tolerance = Number.isFinite(tolerancePercent) ? tolerancePercent : (state.config?.tolerancePercent ?? 20);
   const n = Math.min(groupSizes.length, machineCosts.length);
   if (!n) return null;
 
@@ -1503,7 +1505,7 @@ function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent = 
 
     function search(selection) {
       if (selection.length === n) {
-        const candidate = evaluateMachineAssignment(activeSizes, selection, machineCosts, tolerancePercent);
+        const candidate = evaluateMachineAssignment(activeSizes, selection, machineCosts, tolerance);
         if (compareAssignments(candidate, best) < 0) best = candidate;
         return;
       }
@@ -1532,7 +1534,7 @@ function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent = 
 
     const assignment = new Array(n);
     for (let i = 0; i < n; i++) assignment[sortedGroupIdx[i]] = sortedMachineIdx[i];
-    best = evaluateMachineAssignment(activeSizes, assignment, machineCosts, tolerancePercent);
+    best = evaluateMachineAssignment(activeSizes, assignment, machineCosts, tolerance);
   }
 
   return best;
@@ -1586,11 +1588,7 @@ function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCo
   return { sizes, evaluation: bestEval, iterations };
 }
 
-/**
- * Asigna máquinas a grupos buscando minimizar la varianza del costo/persona.
- * - N ≤ 12: búsqueda exhaustiva (N! permutaciones).
- * - N > 12: greedy (mayor costo → mayor grupo, desigualdad de reordenamiento).
- */
+/** Asigna máquinas con la mejor combinación hallada por findBestMachineAssignment(). */
 function assignMachinesOptimal() {
   const groups   = state.groups;
   const machines = state.machines;
@@ -1607,7 +1605,6 @@ function assignMachinesOptimal() {
   for (let i = 0; i < n; i++) {
     groups[i].machineId = machines[bestAssign.machineIndices[i]].id;
   }
-  return bestAssign;
 }
 
 /* --- CRUD manual de grupos --- */
