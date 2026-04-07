@@ -649,7 +649,7 @@
       <button class="btn btn-secondary" id="btn-paste-people">📋 Importar lista</button>
       <button class="btn btn-secondary" id="btn-load-sample">🎯 Cargar datos de ejemplo</button>
       <button class="btn btn-secondary" id="btn-load-server"
-              title="Carga la lista de personas desde data/people.json (requiere servidor web)">
+              title="Carga la lista desde data/people.json (requiere servidor web, no funciona en file://)">
         📡 Cargar desde servidor
       </button>
       <button class="btn btn-danger" id="btn-clear-people" style="margin-left:auto">🗑 Limpiar todo</button>
@@ -1780,6 +1780,10 @@ function renderResults(res) {
  * o un objeto { people: [...] }.
  */
 async function loadFromServer() {
+  if (window.location.protocol === 'file:') {
+    toast('⚠ No disponible en file:// — abre la página desde un servidor web (ej: Live Server)', 'warning');
+    return;
+  }
   toast('Cargando desde el servidor…', 'info');
   try {
     const resp = await fetch('data/people.json');
@@ -1790,7 +1794,7 @@ async function loadFromServer() {
 
     let added = 0;
     people.forEach(p => {
-      const teamName = p.group !== undefined ? p.group : (p.fixedGroupName || null);
+      const teamName = (p.group ?? p.fixedGroupName) ?? null;
       if (addPerson(p.name, teamName)) added++;
     });
     toast(`✅ ${added} persona(s) cargadas desde el servidor`, 'success');
@@ -1813,7 +1817,7 @@ function renderGroupsPreview() {
 
   if (!state.people.length) { previewEl.style.display = 'none'; return; }
 
-  const minSize = Math.max(1, parseInt(document.getElementById('cfg-minSize').value) || 3);
+  const minSize = state.config.minGroupSize || Math.max(1, parseInt(document.getElementById('cfg-minSize').value) || 3);
 
   // Build group map from current people
   const groupMap = new Map();
