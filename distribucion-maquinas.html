@@ -462,6 +462,78 @@
     .text-muted { color: var(--muted); }
     .mt-05 { margin-top: .5rem; }
     .mb-1  { margin-bottom: 1rem; }
+
+    /* ===== Groups Preview Panel ===== */
+    .groups-preview {
+      margin-top: .75rem;
+      padding: .75rem 1rem;
+      background: var(--surface2);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+    }
+    .groups-preview h3 {
+      font-size: .8125rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: .5rem;
+    }
+    .preview-groups-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .4rem;
+      margin-bottom: .5rem;
+    }
+    .preview-group-chip {
+      display: inline-flex;
+      align-items: center;
+      gap: .25rem;
+      padding: .2rem .6rem;
+      border-radius: 999px;
+      font-size: .75rem;
+      font-weight: 600;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text);
+    }
+    .preview-group-chip.first-group {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary-dk);
+    }
+    .preview-group-chip.micro-group {
+      background: #fef3c7;
+      color: #b45309;
+      border-color: #fde68a;
+    }
+    .preview-free-count { font-size: .8rem; color: var(--muted); }
+
+    /* ===== Unassigned (sin equipo) Section ===== */
+    .unassigned-section {
+      margin-top: 1.5rem;
+      padding: 1rem 1.25rem;
+      background: #fef2f2;
+      border: 1px solid #fecaca;
+      border-radius: var(--radius);
+    }
+    .unassigned-section h3 {
+      font-size: .9rem;
+      font-weight: 700;
+      color: #991b1b;
+      margin-bottom: .4rem;
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+    }
+    .unassigned-desc { font-size: .8rem; color: #991b1b; margin-bottom: .6rem; }
+    .unassigned-chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+    .unassigned-chip {
+      background: #fff;
+      border: 1px solid #fecaca;
+      color: #991b1b;
+      border-radius: 4px;
+      padding: .1rem .45rem;
+      font-size: .75rem;
+    }
   </style>
 </head>
 <body>
@@ -576,6 +648,10 @@
     <div class="form-row mb-1">
       <button class="btn btn-secondary" id="btn-paste-people">📋 Importar lista</button>
       <button class="btn btn-secondary" id="btn-load-sample">🎯 Cargar datos de ejemplo</button>
+      <button class="btn btn-secondary" id="btn-load-server"
+              title="Carga la lista desde data/people.json (requiere servidor web, no funciona en file://)">
+        📡 Cargar desde servidor
+      </button>
       <button class="btn btn-danger" id="btn-clear-people" style="margin-left:auto">🗑 Limpiar todo</button>
     </div>
 
@@ -585,6 +661,14 @@
         <p>Agrega personas manualmente o pega una lista.</p>
       </div>
     </div>
+
+    <!-- Groups preview: shown after loading people -->
+    <div id="groups-preview" class="groups-preview" style="display:none">
+      <h3>🏷️ Grupos detectados en la lista cargada</h3>
+      <div id="preview-groups-list" class="preview-groups-list"></div>
+      <div id="preview-free-count" class="preview-free-count"></div>
+    </div>
+
     <p class="mt-05 text-muted" style="font-size:.78rem">
       Total: <strong id="people-count">0</strong> personas
       &nbsp;·&nbsp; <span class="team-legend-dot">■</span> Equipo pre-asignado (la persona se fija en ese grupo al distribuir)
@@ -768,10 +852,11 @@ function downloadFile(name, content, mime) {
 /* ------------------------------------------------------------------ */
 
 const state = {
-  people:   [],   // [{ id, name }]
-  machines: [],   // [{ id, name, baseCost, transportCost }]
-  groups:   [],   // [{ id, name, memberIds[], machineId }]
-  results:  null, // resultado del último cálculo
+  people:     [],   // [{ id, name, fixedGroupName }]
+  machines:   [],   // [{ id, name, baseCost, transportCost }]
+  groups:     [],   // [{ id, name, memberIds[], machineId }]
+  results:    null, // resultado del último cálculo
+  unassigned: [],   // personas que no caben en ningún equipo establecido
   config: {
     numGroups:       0,   // 0 = igual al número de máquinas
     minGroupSize:    3,
@@ -847,6 +932,7 @@ function renderPeople() {
         <span class="ei">👤</span>
         <p>Agrega personas manualmente o pega una lista.</p>
       </div>`;
+    document.getElementById('groups-preview').style.display = 'none';
     return;
   }
   container.innerHTML = state.people.map(p => `
@@ -859,6 +945,7 @@ function renderPeople() {
              onchange="setPersonTeam(${p.id}, this.value)">
       <button class="btn btn-danger btn-sm" onclick="removePerson(${p.id})" title="Eliminar">✕</button>
     </div>`).join('');
+  renderGroupsPreview();
 }
 
 /* ------------------------------------------------------------------ */
@@ -936,6 +1023,12 @@ function renderMachines() {
  * Crea grupos automáticamente con tamaños PROPORCIONALES al costo de cada
  * máquina para maximizar el equilibrio del costo/persona entre grupos.
  * Los tamaños se calculan con el método Hamilton + refinamiento iterativo.
+ *
+ * Lógica de grupos pre-asignados:
+ *  - Grupos "establecidos": fixedGroupName con tamaño ≥ minGroupSize → se mantienen tal cual.
+ *  - Grupos "micro": fixedGroupName con tamaño < minGroupSize → se absorben en grupos
+ *    establecidos si hay espacio (< absMaxGroupSize); de lo contrario pasan a state.unassigned.
+ *  - Personas libres (sin grupo): se distribuyen en nuevos grupos proporcionales al costo.
  */
 function autoCreateGroups() {
   readConfig();
@@ -959,8 +1052,36 @@ function autoCreateGroups() {
     }
   });
 
-  const fixedEntries   = [...fixedMap.values()];
-  const numFixedGroups = fixedEntries.length;
+  // ── Split fixed groups: established (≥ min) vs micro (< min) ────────────
+  const allFixedEntries    = [...fixedMap.values()];
+  const establishedEntries = allFixedEntries.filter(fg => fg.people.length >= minGroupSize);
+  const microEntries       = allFixedEntries.filter(fg => fg.people.length <  minGroupSize);
+
+  // ── Absorb micro-group people into established groups (if there is room) ─
+  state.unassigned = [];
+  for (const mg of microEntries) {
+    for (const person of mg.people) {
+      // Find the established group with the most remaining capacity
+      const target = establishedEntries
+        .filter(eg => eg.people.length < absMaxGroupSize)
+        .sort((a, b) => a.people.length - b.people.length)[0];
+      if (target) {
+        target.people.push(person);
+      } else {
+        state.unassigned.push(person);
+      }
+    }
+  }
+
+  if (microEntries.length) {
+    const absorbed = microEntries.reduce((s, m) => s + m.people.length, 0) - state.unassigned.length;
+    const msg = state.unassigned.length
+      ? `⚠ ${absorbed} persona(s) de micro-grupos absorbida(s) en equipos establecidos; ${state.unassigned.length} sin lugar → "Sin equipo".`
+      : `ℹ ${absorbed} persona(s) de micro-grupos absorbida(s) en equipos establecidos.`;
+    toast(msg, state.unassigned.length ? 'warning' : 'info');
+  }
+
+  const numFixedGroups = establishedEntries.length;
   const totalGroups    = cfgN > 0 ? cfgN : numMachines;
   const numFreeGroups  = Math.max(0, totalGroups - numFixedGroups);
 
@@ -970,7 +1091,7 @@ function autoCreateGroups() {
     .sort((a, b) => totalCost(b) - totalCost(a));
 
   // Advertir si el tamaño promedio de los grupos libres supera el máximo
-  if (numFreeGroups > 0) {
+  if (numFreeGroups > 0 && freePeople.length > 0) {
     const avgFreeSize = freePeople.length / numFreeGroups;
     if (avgFreeSize > absMaxGroupSize) {
       toast(
@@ -982,8 +1103,8 @@ function autoCreateGroups() {
 
   state.groups = [];
 
-  // 1. Crear grupos pre-asignados (equipo fijo) ──────────────────────────
-  fixedEntries.forEach(fg => {
+  // 1. Crear grupos establecidos (equipo fijo con tamaño suficiente) ─────────
+  establishedEntries.forEach(fg => {
     state.groups.push({
       id:        uid(),
       name:      fg.displayName,
@@ -1631,6 +1752,117 @@ function renderResults(res) {
     : '';
 
   container.innerHTML = alertHtml + statsHtml + warningsHtml + tableHtml + cardsHtml;
+
+  /* Sección "Sin equipo" — personas que no pudieron ser asignadas */
+  if (state.unassigned && state.unassigned.length > 0) {
+    const div = document.createElement('div');
+    div.className = 'unassigned-section';
+    div.innerHTML = `
+      <h3>🚫 Sin equipo (${state.unassigned.length})</h3>
+      <p class="unassigned-desc">
+        Estas personas pertenecían a grupos muy pequeños (micro-grupos) que no pudieron
+        ser absorbidos por ningún equipo establecido — todos estaban al límite de capacidad.
+      </p>
+      <div class="unassigned-chips">
+        ${state.unassigned.map(p => `<span class="unassigned-chip">${esc(p.name)}</span>`).join('')}
+      </div>`;
+    container.appendChild(div);
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  CARGA DESDE SERVIDOR                                              */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Carga la lista de personas desde data/people.json (backend/servidor).
+ * Formato esperado: array de objetos { name, group } o { name, fixedGroupName },
+ * o un objeto { people: [...] }.
+ */
+async function loadFromServer() {
+  if (window.location.protocol === 'file:') {
+    toast('⚠ No disponible en file:// — abre la página desde un servidor web (ej: Live Server)', 'warning');
+    return;
+  }
+  toast('Cargando desde el servidor…', 'info');
+  try {
+    const resp = await fetch('data/people.json');
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} — ${resp.statusText}`);
+    const data   = await resp.json();
+    const people = Array.isArray(data) ? data : (data.people || []);
+    if (!people.length) { toast('El archivo no contiene personas', 'warning'); return; }
+
+    let added = 0;
+    people.forEach(p => {
+      const teamName = (p.group ?? p.fixedGroupName) ?? null;
+      if (addPerson(p.name, teamName)) added++;
+    });
+    toast(`✅ ${added} persona(s) cargadas desde el servidor`, 'success');
+  } catch (e) {
+    toast(`Error al cargar: ${e.message}`, 'error');
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  VISTA PREVIA DE GRUPOS DETECTADOS                                 */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Muestra (en la pestaña Personas) los grupos detectados en la lista cargada.
+ * Resalta el primer equipo predefinido y advierte sobre micro-grupos.
+ */
+function renderGroupsPreview() {
+  const previewEl = document.getElementById('groups-preview');
+  if (!previewEl) return;
+
+  if (!state.people.length) { previewEl.style.display = 'none'; return; }
+
+  const minSize = state.config.minGroupSize || Math.max(1, parseInt(document.getElementById('cfg-minSize').value) || 3);
+
+  // Build group map from current people
+  const groupMap = new Map();
+  let freeCount = 0;
+  state.people.forEach(p => {
+    if (p.fixedGroupName && p.fixedGroupName.trim()) {
+      const key = p.fixedGroupName.trim().toLowerCase();
+      if (!groupMap.has(key)) groupMap.set(key, { displayName: p.fixedGroupName.trim(), count: 0 });
+      groupMap.get(key).count++;
+    } else {
+      freeCount++;
+    }
+  });
+
+  const entries = [...groupMap.values()];
+  if (!entries.length) { previewEl.style.display = 'none'; return; }
+
+  const establishedEntries = entries.filter(e => e.count >= minSize);
+  const microEntries       = entries.filter(e => e.count <  minSize);
+
+  // Build chip list: established groups first (first one highlighted), then micro
+  const chips = [
+    ...establishedEntries.map((fg, i) => {
+      const isFirst = i === 0;
+      const cls     = isFirst ? 'preview-group-chip first-group' : 'preview-group-chip';
+      const icon    = isFirst ? '⭐ ' : '';
+      const tip     = isFirst
+        ? 'Primer equipo predefinido seleccionado'
+        : 'Equipo predefinido establecido';
+      return `<span class="${cls}" title="${tip}">${icon}${esc(fg.displayName)} <strong>(${fg.count})</strong></span>`;
+    }),
+    ...microEntries.map(fg => {
+      const tip = `Micro-grupo: ${fg.count} persona(s) — se absorberán en equipos establecidos si hay espacio`;
+      return `<span class="preview-group-chip micro-group" title="${tip}">⚠ ${esc(fg.displayName)} <strong>(${fg.count})</strong></span>`;
+    })
+  ];
+
+  document.getElementById('preview-groups-list').innerHTML = chips.join('');
+
+  const freeMsg = freeCount > 0
+    ? `${freeCount} persona(s) sin grupo — se distribuirán en nuevos grupos al balancear`
+    : 'Todas las personas tienen equipo asignado';
+  document.getElementById('preview-free-count').textContent = freeMsg;
+
+  previewEl.style.display = '';
 }
 
 /* ------------------------------------------------------------------ */
@@ -1785,7 +2017,7 @@ function updateBadges() {
 /* ------------------------------------------------------------------ */
 
 function loadSampleData() {
-  /* 52 personas — las primeras 8 ya tienen equipo pre-asignado */
+  /* 52 personas — 8 con equipo establecido, 3 en micro-grupos, 41 libres */
   const people = [
     { name: 'Ana García',           fixedGroupName: 'Equipo Alpha' },
     { name: 'Carlos López',         fixedGroupName: 'Equipo Alpha' },
@@ -1795,7 +2027,11 @@ function loadSampleData() {
     { name: 'Miguel Rodríguez',     fixedGroupName: 'Equipo Beta'  },
     { name: 'Sofía Pérez',          fixedGroupName: 'Equipo Beta'  },
     { name: 'David Sánchez',        fixedGroupName: 'Equipo Beta'  },
-    // Las siguientes 44 personas no tienen equipo pre-asignado
+    // Micro-grupos (< minGroupSize=3) → se absorben en equipos establecidos si hay espacio
+    { name: 'Tomás Peña',           fixedGroupName: 'Equipo Nano'  },
+    { name: 'Estela Méndez',        fixedGroupName: 'Equipo Nano'  },
+    { name: 'Víctor Barrera',       fixedGroupName: 'Solo Equipo'  },
+    // Las siguientes 41 personas no tienen equipo pre-asignado
     'Elena Ramírez','Luis Torres',
     'Isabel Flores','Roberto Díaz','Patricia Cruz','Fernando Morales','Carmen Jiménez',
     'Alejandro Reyes','Valeria Ortiz','Ricardo Gutiérrez','Adriana Vargas','Sergio Ramos',
@@ -1804,8 +2040,7 @@ function loadSampleData() {
     'Sandra Alvarado','Benjamín Castro','Diana Vega','Rodrigo Ríos','Marcela Guerrero',
     'Javier Campos','Rebeca Soto','Eduardo Espinoza','Lucía Cortés','Raúl Ibáñez',
     'Mariana Delgado','Ignacio Rivas','Gloria Palacios','Mauricio Fuentes','Fabiola Luna',
-    'Andrés Montes','Norma Acosta','Guillermo Bravo','Angélica Salazar','Tomás Peña',
-    'Estela Méndez','Víctor Barrera'
+    'Andrés Montes','Norma Acosta','Guillermo Bravo','Angélica Salazar'
   ];
 
   /* 8 máquinas industriales con costos distintos */
@@ -1825,16 +2060,17 @@ function loadSampleData() {
       ? { id: uid(), name: p, fixedGroupName: null }
       : { id: uid(), name: p.name, fixedGroupName: p.fixedGroupName || null }
   );
-  state.machines = machines.map(m => ({ id: uid(), ...m }));
-  state.groups   = [];
-  state.results  = null;
+  state.machines  = machines.map(m => ({ id: uid(), ...m }));
+  state.groups    = [];
+  state.results   = null;
+  state.unassigned = [];
 
   renderPeople();
   renderMachines();
   renderGroups();
   renderResults(null);
   updateBadges();
-  toast('✅ Datos de ejemplo cargados: 52 personas (8 con equipo pre-asignado) · 8 máquinas', 'success');
+  toast('✅ Datos de ejemplo: 52 personas (8 establecidos · 3 micro-grupos · 41 libres) · 8 máquinas', 'success');
 }
 
 /* ------------------------------------------------------------------ */
@@ -1904,10 +2140,14 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSampleData();
   });
 
+  /* --- Personas: cargar desde servidor --- */
+  document.getElementById('btn-load-server').addEventListener('click', loadFromServer);
+
   /* --- Personas: limpiar todo --- */
   document.getElementById('btn-clear-people').addEventListener('click', () => {
     if (!confirm('¿Eliminar todas las personas? Se limpiarán los grupos también.')) return;
-    state.people = [];
+    state.people     = [];
+    state.unassigned = [];
     state.groups.forEach(g => (g.memberIds = []));
     renderPeople();
     renderGroups();
