@@ -1281,6 +1281,9 @@ function autoCreateGroups() {
     ];
     const minTotals = [
       ...establishedEntries.map(fg => fg.people.length),
+      // Si un grupo libre ya nace por debajo del mínimo por una restricción real
+      // de personas disponibles, conservamos ese tamaño para no volver inviable
+      // la búsqueda local exigiendo más integrantes de los que existen.
       ...sizes.map(size => size > 0 ? Math.min(minGroupSize, size) : 0)
     ];
     const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
@@ -1452,7 +1455,10 @@ function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tol
   const maxPctDeviation = pctDeviations.length
     ? Math.max(...pctDeviations.map(value => Math.abs(value)))
     : 0;
-  const countOutsideTolerance = pctDeviations.filter(value => Math.abs(value) > tolerancePercent + FLOATING_POINT_EPSILON).length;
+  const countOutsideTolerance = pctDeviations.reduce(
+    (count, value) => count + (Math.abs(value) > tolerancePercent + FLOATING_POINT_EPSILON ? 1 : 0),
+    0
+  );
 
   return {
     machineIndices: [...machineIndices],
@@ -1540,6 +1546,7 @@ function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCo
   let sizes = [...initialSizes];
   let bestEval = findBestMachineAssignment(sizes, machineCosts, tolerancePercent);
   if (!bestEval) return { sizes, evaluation: null, iterations: 0 };
+  if (bestEval.countOutsideTolerance === 0) return { sizes, evaluation: bestEval, iterations: 0 };
 
   let iterations = 0;
   let improved = true;
@@ -1588,7 +1595,7 @@ function assignMachinesOptimal() {
   const groups   = state.groups;
   const machines = state.machines;
   const n        = Math.min(groups.length, machines.length);
-  if (!n) return null;
+  if (!n) return;
 
   const gSizes = groups.slice(0, n).map(g => g.memberIds.length);
   const mCosts = machines.map(m => totalCost(m));
