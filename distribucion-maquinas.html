@@ -191,9 +191,9 @@
     /* ===== People List ===== */
     .people-list {
       display: grid;
-      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-      gap: .4rem;
-      max-height: 340px;
+      grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+      gap: .45rem;
+      max-height: 420px;
       overflow-y: auto;
       padding: .5rem;
       background: var(--surface2);
@@ -202,22 +202,40 @@
     }
     .person-item {
       display: flex;
-      align-items: center;
-      justify-content: space-between;
-      padding: .3rem .6rem;
+      align-items: flex-start;
+      padding: .5rem .6rem;
       background: var(--surface);
-      border-radius: 5px;
+      border-radius: 6px;
       border: 1px solid var(--border);
-      gap: .4rem;
+      gap: .45rem;
+      transition: border-color .15s, box-shadow .15s;
     }
-    .person-item span { flex: 1; font-size: .8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-
-    .person-team-input {
-      width: 82px;
-      min-width: 60px;
+    .person-item:hover {
+      border-color: #93c5fd;
+      box-shadow: 0 0 0 2px rgba(37,99,235,.07);
+    }
+    .person-avatar {
+      width: 32px; height: 32px;
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: .6rem; font-weight: 800;
       flex-shrink: 0;
-      font-size: .68rem;
-      padding: .15rem .3rem;
+      text-transform: uppercase;
+      letter-spacing: .03em;
+    }
+    .person-info {
+      flex: 1; min-width: 0;
+      display: flex; flex-direction: column; gap: .25rem;
+    }
+    .person-name {
+      font-size: .8125rem; font-weight: 700; color: var(--text);
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+      line-height: 1.3;
+    }
+    .person-team-input {
+      width: 100%;
+      font-size: .7rem;
+      padding: .15rem .35rem;
       border: 1px solid var(--border);
       border-radius: 4px;
       color: var(--muted);
@@ -230,6 +248,22 @@
       border-color: var(--team-border);
     }
     .team-legend-dot { color: var(--team-color); }
+
+    /* ===== Team Filter Bar ===== */
+    .team-filter-bar { margin-bottom: .65rem; }
+    .team-filter-bar-label {
+      font-size: .7rem; font-weight: 700; color: var(--muted);
+      text-transform: uppercase; letter-spacing: .04em; margin-bottom: .3rem;
+    }
+    .team-filter-chips { display: flex; flex-wrap: wrap; gap: .3rem; }
+    .tfc {
+      padding: .2rem .6rem; border-radius: 999px;
+      border: 1px solid var(--border); background: var(--surface2); color: var(--text);
+      cursor: pointer; font-size: .72rem; font-weight: 500;
+      transition: all .15s; white-space: nowrap; user-select: none; line-height: 1.5;
+    }
+    .tfc:hover:not(.active) { background: var(--bg); border-color: var(--primary); }
+    .tfc.active { background: var(--primary); color: #fff; border-color: var(--primary-dk); }
 
     /* ===== Tables ===== */
     .table-wrap { overflow-x: auto; }
@@ -655,6 +689,11 @@
       <button class="btn btn-danger" id="btn-clear-people" style="margin-left:auto">🗑 Limpiar todo</button>
     </div>
 
+    <div id="team-filter-bar" class="team-filter-bar" style="display:none">
+      <div class="team-filter-bar-label">🔍 Filtrar por equipo</div>
+      <div class="team-filter-chips" id="team-filter-chips"></div>
+    </div>
+
     <div id="people-list" class="people-list">
       <div class="empty-state" style="grid-column:1/-1">
         <span class="ei">👤</span>
@@ -771,7 +810,9 @@
 <div class="action-bar">
   <button class="btn btn-success btn-lg" id="btn-optimize">⚖️ Balancear / Optimizar Reparto</button>
   <button class="btn btn-secondary"      id="btn-export-csv">📥 Exportar CSV</button>
-  <button class="btn btn-secondary"      id="btn-export-json">📥 Exportar JSON</button>
+  <button class="btn btn-secondary"      id="btn-export-json">💾 Guardar JSON</button>
+  <button class="btn btn-secondary"      id="btn-import-json">📤 Importar JSON</button>
+  <input type="file" id="inp-import-json" accept=".json" style="display:none">
   <span id="status-msg"></span>
 </div>
 
@@ -796,6 +837,34 @@
 
 let _uid = 1;
 const uid = () => _uid++;
+
+let _teamFilter = '__all__'; // '__all__' = no filter; '' = free people; string = specific team
+
+/** Colour palette for team avatars / badges */
+const AVATAR_COLORS = [
+  { bg:'#dbeafe', color:'#1d4ed8' },
+  { bg:'#dcfce7', color:'#15803d' },
+  { bg:'#fef3c7', color:'#92400e' },
+  { bg:'#fce7f3', color:'#9d174d' },
+  { bg:'#f3e8ff', color:'#6b21a8' },
+  { bg:'#ffedd5', color:'#9a3412' },
+  { bg:'#e0f2fe', color:'#0369a1' },
+  { bg:'#ecfdf5', color:'#065f46' },
+];
+
+function getTeamColorIdx(name) {
+  if (!name) return -1;
+  let h = 0;
+  // Polynomial rolling hash with prime 31 — good distribution for short strings
+  for (let i = 0; i < name.length; i++) h = (h * 31 + name.charCodeAt(i)) >>> 0;
+  return h % AVATAR_COLORS.length;
+}
+
+function getInitials(name) {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+  return parts[0].slice(0, 2).toUpperCase();
+}
 
 /** Normaliza el nombre de equipo: recorta espacios y devuelve null si está vacío */
 function normalizeTeamName(value) {
@@ -920,7 +989,11 @@ function removePerson(id) {
 
 function setPersonTeam(id, teamName) {
   const p = state.people.find(p => p.id === id);
-  if (p) p.fixedGroupName = normalizeTeamName(teamName);
+  if (p) {
+    p.fixedGroupName = normalizeTeamName(teamName);
+    renderTeamFilters();
+    renderGroupsPreview();
+  }
 }
 
 function renderPeople() {
@@ -933,19 +1006,87 @@ function renderPeople() {
         <p>Agrega personas manualmente o pega una lista.</p>
       </div>`;
     document.getElementById('groups-preview').style.display = 'none';
+    renderTeamFilters();
     return;
   }
-  container.innerHTML = state.people.map(p => `
-    <div class="person-item">
-      <span title="${esc(p.name)}">${esc(p.name)}</span>
-      <input type="text" class="person-team-input"
-             value="${esc(p.fixedGroupName || '')}"
-             placeholder="Equipo…"
-             title="Equipo pre-asignado — déjalo vacío para distribución libre"
-             onchange="setPersonTeam(${p.id}, this.value)">
-      <button class="btn btn-danger btn-sm" onclick="removePerson(${p.id})" title="Eliminar">✕</button>
-    </div>`).join('');
+
+  // Apply team filter
+  const filtered = _teamFilter === '__all__'
+    ? state.people
+    : _teamFilter === ''
+      ? state.people.filter(p => !p.fixedGroupName)
+      : state.people.filter(p => (p.fixedGroupName || '').trim().toLowerCase() === _teamFilter.toLowerCase());
+
+  if (!filtered.length) {
+    container.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="ei">🔍</span><p>No hay personas en este filtro.</p></div>`;
+  } else {
+    container.innerHTML = filtered.map(p => {
+      const initials = getInitials(p.name);
+      const idx      = getTeamColorIdx(p.fixedGroupName);
+      const av       = idx >= 0 ? AVATAR_COLORS[idx] : { bg: '#f1f5f9', color: '#64748b' };
+      return `
+      <div class="person-item">
+        <div class="person-avatar" style="background:${av.bg};color:${av.color}">${initials}</div>
+        <div class="person-info">
+          <div class="person-name" title="${esc(p.name)}">${esc(p.name)}</div>
+          <input type="text" class="person-team-input"
+                 value="${esc(p.fixedGroupName || '')}"
+                 placeholder="Equipo…"
+                 title="Equipo pre-asignado — déjalo vacío para distribución libre"
+                 onchange="setPersonTeam(${p.id}, this.value)">
+        </div>
+        <button class="btn btn-danger btn-sm" onclick="removePerson(${p.id})" title="Eliminar">✕</button>
+      </div>`;
+    }).join('');
+  }
+
+  renderTeamFilters();
   renderGroupsPreview();
+}
+
+function renderTeamFilters() {
+  const bar   = document.getElementById('team-filter-bar');
+  const chips = document.getElementById('team-filter-chips');
+  if (!bar || !chips) return;
+  if (!state.people.length) { bar.style.display = 'none'; return; }
+
+  const teamCount = new Map();
+  let freeCount = 0;
+  state.people.forEach(p => {
+    if (p.fixedGroupName && p.fixedGroupName.trim()) {
+      const k = p.fixedGroupName.trim();
+      teamCount.set(k, (teamCount.get(k) || 0) + 1);
+    } else {
+      freeCount++;
+    }
+  });
+
+  const hasTeams = teamCount.size > 0;
+  if (!hasTeams && freeCount === 0) { bar.style.display = 'none'; return; }
+
+  const allActive = _teamFilter === '__all__';
+  let html = `<span class="tfc ${allActive ? 'active' : ''}" onclick="setTeamFilter('__all__')">Todos (${state.people.length})</span>`;
+
+  teamCount.forEach((cnt, name) => {
+    const idx    = getTeamColorIdx(name);
+    const ac     = AVATAR_COLORS[idx];
+    const active = _teamFilter !== '__all__' && _teamFilter !== '' && _teamFilter.toLowerCase() === name.toLowerCase();
+    const style  = active ? '' : `style="border-color:${ac.color}50;color:${ac.color};background:${ac.bg}"`;
+    html += `<span class="tfc ${active ? 'active' : ''}" ${style} onclick="setTeamFilter('${esc(name)}')">${esc(name)} (${cnt})</span>`;
+  });
+
+  if (freeCount > 0) {
+    const freeActive = _teamFilter === '';
+    html += `<span class="tfc ${freeActive ? 'active' : ''}" onclick="setTeamFilter('')">Sin equipo (${freeCount})</span>`;
+  }
+
+  chips.innerHTML = html;
+  bar.style.display = '';
+}
+
+function setTeamFilter(team) {
+  _teamFilter = team;
+  renderPeople();
 }
 
 /* ------------------------------------------------------------------ */
@@ -1950,12 +2091,12 @@ function exportCSV() {
 }
 
 function exportJSON() {
-  if (!state.results) { toast('Primero optimiza el reparto', 'error'); return; }
-
   const data = {
+    version: 2,
     fecha: new Date().toISOString(),
     configuracion: {
-      numGrupos: state.groups.length,
+      modo: state.mode,
+      numGrupos: state.config.numGroups,
       tamMin: state.config.minGroupSize,
       tamMax: state.config.maxGroupSize,
       tamMaxAbsoluto: state.config.absMaxGroupSize,
@@ -1963,34 +2104,87 @@ function exportJSON() {
       transporteAutomatico: state.config.autoTransport,
       tasaTransporte: state.config.transportRate
     },
-    resumen: {
-      totalPersonas: state.results.totalAllPeople,
-      totalGrupos: state.results.groupStats.length,
-      costoTotal: +state.results.totalAllCosts.toFixed(2),
-      promedioGlobalPorPersona: +state.results.globalAvg.toFixed(2),
-      desviacionEstandar: +state.results.stdDev.toFixed(2),
-      coeficienteVariacion: +state.results.cvPct.toFixed(2),
-      equilibrado: state.results.isBalanced
-    },
-    grupos: state.results.groupStats.map(s => ({
-      nombre: s.group.name,
-      maquina: {
-        nombre: s.machine.name,
-        costoBase: s.machine.baseCost,
-        costoTransporte: s.machine.transportCost,
-        costoTotal: +s.total.toFixed(2)
-      },
-      numPersonas: s.size,
-      costoPorPersona: +s.cpp.toFixed(2),
-      desviacion: +s.deviation.toFixed(2),
-      desviacionPct: +s.pctDeviation.toFixed(2),
-      estado: s.isOver ? 'por_encima' : s.isUnder ? 'por_debajo' : 'ok',
-      miembros: s.members.map(p => p.name)
+    personas: state.people.map(p => ({
+      nombre: p.name,
+      equipo: p.fixedGroupName || null
+    })),
+    maquinas: state.machines.map(m => ({
+      nombre: m.name,
+      costoBase: m.baseCost,
+      costoTransporte: m.transportCost
     }))
   };
+  const ts   = new Date().toISOString().slice(0,10); // YYYY-MM-DD
+  downloadFile(`configuracion_reparto_${ts}.json`, JSON.stringify(data, null, 2), 'application/json');
+  toast('Configuración guardada en JSON', 'success');
+}
 
-  downloadFile('reparto_maquinas.json', JSON.stringify(data, null, 2), 'application/json');
-  toast('JSON descargado', 'success');
+function importConfigJSON(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    try {
+      const data = JSON.parse(e.target.result);
+      if (!Array.isArray(data.personas) && !Array.isArray(data.maquinas)) {
+        toast('Archivo JSON inválido: no contiene personas ni máquinas', 'error');
+        return;
+      }
+      if ((state.people.length || state.machines.length) &&
+          !confirm('¿Reemplazar los datos actuales con la configuración del archivo?')) return;
+
+      // Load config
+      const cfg = data.configuracion || {};
+      if (cfg.modo != null) {
+        state.mode = cfg.modo;
+        document.getElementById('cfg-mode').value = cfg.modo;
+      }
+      if (cfg.numGrupos          != null) document.getElementById('cfg-numGroups').value      = cfg.numGrupos;
+      if (cfg.tamMin             != null) document.getElementById('cfg-minSize').value         = cfg.tamMin;
+      if (cfg.tamMax             != null) document.getElementById('cfg-maxSize').value         = cfg.tamMax;
+      if (cfg.tamMaxAbsoluto     != null) document.getElementById('cfg-absMax').value          = cfg.tamMaxAbsoluto;
+      if (cfg.toleranciaPct      != null) document.getElementById('cfg-tolerance').value       = cfg.toleranciaPct;
+      if (cfg.transporteAutomatico != null) document.getElementById('cfg-autoTransport').checked = cfg.transporteAutomatico;
+      if (cfg.tasaTransporte     != null) document.getElementById('cfg-transportRate').value   = cfg.tasaTransporte;
+      readConfig();
+
+      // Load people — supports both canonical field names (version 2: nombre/equipo)
+      // and legacy/alternate names (name, fixedGroupName, group) for backward compatibility
+      state.people = [];
+      (data.personas || []).forEach(p => {
+        const name = (p.nombre || p.name || '').trim();
+        const team = p.equipo ?? p.fixedGroupName ?? p.group ?? null;
+        if (name) state.people.push({ id: uid(), name, fixedGroupName: normalizeTeamName(team) });
+      });
+
+      // Load machines — supports canonical fields (nombre/costoBase/costoTransporte) and
+      // legacy English field names (name/baseCost/transportCost) for backward compatibility
+      state.machines = [];
+      (data.maquinas || []).forEach(m => {
+        const name      = (m.nombre || m.name || '').trim();
+        const base      = parseFloat(m.costoBase ?? m.baseCost ?? 0) || 0;
+        const transport = parseFloat(m.costoTransporte ?? m.transportCost ?? 0) || 0;
+        if (name) state.machines.push({ id: uid(), name, baseCost: base, transportCost: transport });
+      });
+
+      state.groups     = [];
+      state.results    = null;
+      state.unassigned = [];
+      _teamFilter      = '__all__';
+
+      document.getElementById('grupos-auto-panel').style.display   = state.mode === 'auto'   ? '' : 'none';
+      document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
+
+      renderPeople();
+      renderMachines();
+      renderGroups();
+      renderResults(null);
+      updateBadges();
+      toast(`✅ Importado: ${state.people.length} persona(s) · ${state.machines.length} máquina(s)`, 'success');
+    } catch (err) {
+      toast(`Error al importar: ${err.message}`, 'error');
+    }
+  };
+  reader.readAsText(file);
 }
 
 /* ------------------------------------------------------------------ */
@@ -2064,6 +2258,7 @@ function loadSampleData() {
   state.groups    = [];
   state.results   = null;
   state.unassigned = [];
+  _teamFilter     = '__all__';
 
   renderPeople();
   renderMachines();
@@ -2148,6 +2343,7 @@ document.addEventListener('DOMContentLoaded', () => {
     if (!confirm('¿Eliminar todas las personas? Se limpiarán los grupos también.')) return;
     state.people     = [];
     state.unassigned = [];
+    _teamFilter      = '__all__';
     state.groups.forEach(g => (g.memberIds = []));
     renderPeople();
     renderGroups();
@@ -2185,6 +2381,15 @@ document.addEventListener('DOMContentLoaded', () => {
   /* --- Exportar --- */
   document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
   document.getElementById('btn-export-json').addEventListener('click', exportJSON);
+
+  /* --- Importar JSON --- */
+  document.getElementById('btn-import-json').addEventListener('click', () => {
+    document.getElementById('inp-import-json').click();
+  });
+  document.getElementById('inp-import-json').addEventListener('change', e => {
+    importConfigJSON(e.target.files[0]);
+    e.target.value = ''; // reset so same file can be re-imported
+  });
 
   /* --- Cargar datos de ejemplo al iniciar --- */
   loadSampleData();
