@@ -1,0 +1,1688 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Repartición Equitativa de Máquinas</title>
+  <style>
+    /* ===== Variables ===== */
+    :root {
+      --primary:      #2563eb;
+      --primary-dk:   #1d4ed8;
+      --success:      #16a34a;
+      --warning:      #d97706;
+      --danger:       #dc2626;
+      --info:         #0284c7;
+      --bg:           #f1f5f9;
+      --surface:      #ffffff;
+      --surface2:     #f8fafc;
+      --border:       #e2e8f0;
+      --text:         #1e293b;
+      --muted:        #64748b;
+      --light:        #94a3b8;
+      --radius:       10px;
+      --shadow:       0 1px 3px rgba(0,0,0,.10), 0 1px 2px rgba(0,0,0,.06);
+      --shadow-md:    0 4px 6px rgba(0,0,0,.07), 0 2px 4px rgba(0,0,0,.06);
+    }
+
+    /* ===== Reset ===== */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+
+    /* ===== Header ===== */
+    header {
+      background: var(--primary);
+      color: #fff;
+      padding: 1rem 1.5rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+      box-shadow: var(--shadow-md);
+    }
+    header h1 { font-size: 1.35rem; font-weight: 700; }
+    header p  { font-size: .8125rem; opacity: .88; }
+
+    /* ===== Layout ===== */
+    .container { max-width: 1120px; margin: 0 auto; padding: 1.25rem 1.25rem 5rem; }
+
+    .card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 1.25rem;
+      margin-bottom: 1rem;
+    }
+    .card h2 {
+      font-size: .9375rem;
+      font-weight: 700;
+      color: var(--text);
+      margin-bottom: .875rem;
+      display: flex;
+      align-items: center;
+      gap: .4rem;
+    }
+
+    /* ===== Tabs ===== */
+    .tabs {
+      display: flex;
+      gap: .25rem;
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: .3rem;
+      box-shadow: var(--shadow);
+      margin-bottom: 1rem;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      flex: 1;
+      min-width: 100px;
+      padding: .5rem .75rem;
+      border: none;
+      background: none;
+      border-radius: 7px;
+      cursor: pointer;
+      font-size: .8125rem;
+      font-weight: 500;
+      color: var(--muted);
+      transition: all .15s;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: .35rem;
+    }
+    .tab-btn:hover  { background: var(--bg); color: var(--text); }
+    .tab-btn.active { background: var(--primary); color: #fff; }
+
+    .tab-content         { display: none; }
+    .tab-content.active  { display: block; }
+
+    /* ===== Forms ===== */
+    .form-row {
+      display: flex;
+      gap: .5rem;
+      align-items: flex-end;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: .2rem;
+      flex: 1;
+      min-width: 110px;
+    }
+    label {
+      font-size: .7rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+    }
+    input[type="text"],
+    input[type="number"],
+    textarea,
+    select {
+      padding: .45rem .65rem;
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      font-size: .8125rem;
+      color: var(--text);
+      background: var(--surface);
+      outline: none;
+      transition: border-color .15s, box-shadow .15s;
+      width: 100%;
+    }
+    input:focus, textarea:focus, select:focus {
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+    }
+    textarea { resize: vertical; min-height: 80px; font-family: inherit; }
+
+    /* ===== Buttons ===== */
+    .btn {
+      padding: .45rem .9rem;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: .8125rem;
+      font-weight: 600;
+      transition: all .15s;
+      display: inline-flex;
+      align-items: center;
+      gap: .35rem;
+      white-space: nowrap;
+      text-decoration: none;
+    }
+    .btn:disabled { opacity: .5; cursor: not-allowed; }
+    .btn-primary   { background: var(--primary); color: #fff; }
+    .btn-primary:hover:not(:disabled)   { background: var(--primary-dk); }
+    .btn-success   { background: var(--success); color: #fff; }
+    .btn-success:hover:not(:disabled)   { background: #15803d; }
+    .btn-danger    { background: var(--danger);  color: #fff; }
+    .btn-danger:hover:not(:disabled)    { background: #b91c1c; }
+    .btn-secondary {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+    }
+    .btn-secondary:hover:not(:disabled) { background: var(--border); }
+    .btn-sm  { padding: .2rem .55rem; font-size: .7rem; }
+    .btn-lg  { padding: .7rem 1.6rem; font-size: .9375rem; font-weight: 700; }
+
+    /* ===== Config Grid ===== */
+    .config-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+      gap: .75rem;
+    }
+    .cfg-checkbox { display: flex; align-items: center; gap: .4rem; margin-top: .25rem; }
+    .cfg-checkbox input { width: auto; }
+
+    /* ===== People List ===== */
+    .people-list {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+      gap: .4rem;
+      max-height: 340px;
+      overflow-y: auto;
+      padding: .5rem;
+      background: var(--surface2);
+      border-radius: 6px;
+      border: 1px solid var(--border);
+    }
+    .person-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: .3rem .6rem;
+      background: var(--surface);
+      border-radius: 5px;
+      border: 1px solid var(--border);
+      gap: .4rem;
+    }
+    .person-item span { flex: 1; font-size: .8125rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+    /* ===== Tables ===== */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: .8125rem; }
+    th {
+      background: var(--surface2);
+      padding: .45rem .75rem;
+      text-align: left;
+      font-size: .7rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      border-bottom: 1px solid var(--border);
+    }
+    td { padding: .4rem .75rem; border-bottom: 1px solid var(--border); vertical-align: middle; }
+    tr:last-child td { border-bottom: none; }
+    tr:hover td { background: var(--surface2); }
+    table input[type="number"] { width: 90px; }
+
+    /* ===== Badges ===== */
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      padding: .1rem .45rem;
+      border-radius: 999px;
+      font-size: .6875rem;
+      font-weight: 700;
+    }
+    .badge-success { background: #dcfce7; color: #15803d; }
+    .badge-warning { background: #fef3c7; color: #b45309; }
+    .badge-danger  { background: #fee2e2; color: #b91c1c; }
+    .badge-info    { background: #e0f2fe; color: #0369a1; }
+    .badge-neutral { background: var(--surface2); color: var(--muted); border: 1px solid var(--border); }
+
+    /* ===== Alerts ===== */
+    .alert {
+      padding: .65rem 1rem;
+      border-radius: 6px;
+      font-size: .8125rem;
+      margin-bottom: .75rem;
+      display: flex;
+      align-items: flex-start;
+      gap: .5rem;
+    }
+    .alert-warning { background: #fffbeb; border: 1px solid #fde68a; color: #92400e; }
+    .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; }
+    .alert-info    { background: #f0f9ff; border: 1px solid #bae6fd; color: #0c4a6e; }
+    .alert-danger  { background: #fef2f2; border: 1px solid #fecaca; color: #991b1b; }
+
+    /* ===== Stats summary boxes ===== */
+    .stats-row {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+      gap: .75rem;
+      margin-bottom: 1.25rem;
+    }
+    .stat-box {
+      background: var(--surface2);
+      border-radius: 8px;
+      padding: .65rem .9rem;
+      border: 1px solid var(--border);
+    }
+    .stat-box .slabel { font-size: .7rem; color: var(--muted); margin-bottom: .2rem; }
+    .stat-box .svalue { font-size: 1.15rem; font-weight: 700; }
+
+    /* ===== Results grid ===== */
+    .results-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+      gap: 1rem;
+      margin-top: 1rem;
+    }
+    .group-card {
+      background: var(--surface);
+      border-radius: var(--radius);
+      border: 1px solid var(--border);
+      overflow: hidden;
+    }
+    .group-card-hd {
+      padding: .6rem .9rem;
+      background: var(--surface2);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: .4rem;
+    }
+    .group-card-hd h3 { font-size: .875rem; font-weight: 700; flex: 1; }
+    .group-card-bd { padding: .7rem .9rem; }
+    .g-stat {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: .22rem 0;
+      border-bottom: 1px solid var(--border);
+      font-size: .78rem;
+    }
+    .g-stat:last-of-type { border-bottom: none; }
+    .g-stat .k { color: var(--muted); }
+    .g-stat .v { font-weight: 700; }
+
+    .dev-bar-wrap { height: 5px; background: var(--border); border-radius: 999px; overflow: hidden; margin: .4rem 0; }
+    .dev-bar { height: 100%; border-radius: 999px; transition: width .35s; }
+
+    .group-members { margin-top: .6rem; padding-top: .6rem; border-top: 1px solid var(--border); }
+    .group-members h4 { font-size: .675rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: .3rem; }
+    .group-members ul { list-style: none; display: flex; flex-wrap: wrap; gap: .25rem; }
+    .group-members li {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: .1rem .4rem;
+      font-size: .7rem;
+    }
+
+    /* ===== Manual groups ===== */
+    .manual-layout {
+      display: grid;
+      grid-template-columns: 260px 1fr;
+      gap: 1rem;
+      align-items: start;
+    }
+    @media(max-width:700px){ .manual-layout { grid-template-columns: 1fr; } }
+
+    .pool-panel { position: sticky; top: 1rem; }
+    .pool-panel h3 { font-size: .75rem; font-weight: 700; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: .4rem; }
+
+    .manual-groups-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(230px, 1fr));
+      gap: .75rem;
+    }
+    .mg-card {
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+    }
+    .mg-header {
+      background: var(--surface2);
+      padding: .4rem .6rem;
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      gap: .35rem;
+    }
+    .mg-header input[type="text"] {
+      flex: 1;
+      border: none;
+      background: none;
+      font-weight: 700;
+      padding: 0;
+      font-size: .8125rem;
+    }
+    .mg-body { padding: .5rem; }
+
+    .drop-zone {
+      min-height: 70px;
+      border: 2px dashed var(--border);
+      border-radius: 6px;
+      padding: .4rem;
+      display: flex;
+      flex-wrap: wrap;
+      gap: .25rem;
+      align-content: flex-start;
+      transition: border-color .15s, background .15s;
+    }
+    .drop-zone.drag-over { border-color: var(--primary); background: #eff6ff; }
+    .drop-zone .empty-hint { color: var(--light); font-size: .75rem; padding: .2rem; align-self: center; }
+
+    .person-chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 4px;
+      padding: .1rem .45rem;
+      font-size: .72rem;
+      cursor: grab;
+      display: flex;
+      align-items: center;
+      gap: .25rem;
+      user-select: none;
+    }
+    .person-chip:active { cursor: grabbing; opacity: .7; }
+    .chip-rm { cursor: pointer; opacity: .55; line-height: 1; font-size: .8em; }
+    .chip-rm:hover { opacity: 1; }
+
+    .mg-machine-row {
+      margin-top: .45rem;
+      display: flex;
+      gap: .4rem;
+      align-items: center;
+    }
+    .mg-machine-row label { font-size: .7rem; white-space: nowrap; text-transform: none; letter-spacing: 0; }
+
+    /* ===== Summary table deviation colors ===== */
+    .over  { color: var(--danger)  !important; font-weight: 700; }
+    .under { color: var(--warning) !important; font-weight: 700; }
+    .ok    { color: var(--success) !important; }
+
+    /* ===== Sticky action bar ===== */
+    .action-bar {
+      position: fixed;
+      bottom: 0; left: 0; right: 0;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: .75rem 1.5rem;
+      display: flex;
+      gap: .6rem;
+      align-items: center;
+      box-shadow: 0 -2px 12px rgba(0,0,0,.09);
+      flex-wrap: wrap;
+      z-index: 100;
+    }
+    #status-msg {
+      font-size: .8125rem;
+      margin-left: auto;
+      transition: color .2s;
+    }
+
+    /* ===== Empty state ===== */
+    .empty-state {
+      text-align: center;
+      padding: 2.25rem 1.25rem;
+      color: var(--muted);
+    }
+    .empty-state .ei { font-size: 2.25rem; display: block; margin-bottom: .6rem; }
+
+    /* ===== Misc ===== */
+    [title] { cursor: help; }
+    .text-muted { color: var(--muted); }
+    .mt-05 { margin-top: .5rem; }
+    .mb-1  { margin-bottom: 1rem; }
+  </style>
+</head>
+<body>
+
+<!-- =====================================================================
+     HEADER
+     ===================================================================== -->
+<header>
+  <div>
+    <h1>🔧 Repartición Equitativa de Máquinas</h1>
+    <p>Asigna máquinas a grupos de personas buscando la inversión más justa por persona</p>
+  </div>
+</header>
+
+<div class="container">
+
+  <!-- ==================================================================
+       PANEL DE CONFIGURACIÓN
+       ================================================================== -->
+  <div class="card">
+    <h2>⚙️ Configuración</h2>
+    <div class="config-grid">
+
+      <div class="form-group">
+        <label>Modo de grupos</label>
+        <select id="cfg-mode">
+          <option value="auto">Automático</option>
+          <option value="manual">Manual</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label title="0 = igual al número de máquinas">Núm. grupos deseados (0=auto)</label>
+        <input type="number" id="cfg-numGroups" value="0" min="0" max="200">
+      </div>
+
+      <div class="form-group">
+        <label>Tamaño mínimo grupo</label>
+        <input type="number" id="cfg-minSize" value="3" min="1" max="50">
+      </div>
+
+      <div class="form-group">
+        <label>Tamaño máximo grupo</label>
+        <input type="number" id="cfg-maxSize" value="5" min="1" max="100">
+      </div>
+
+      <div class="form-group">
+        <label title="Permitido cuando el costo de la máquina lo justifica">Máximo absoluto</label>
+        <input type="number" id="cfg-absMax" value="7" min="1" max="100">
+      </div>
+
+      <div class="form-group">
+        <label title="Diferencia % aceptable respecto al promedio global">Tolerancia (%)</label>
+        <input type="number" id="cfg-tolerance" value="20" min="0" max="100">
+      </div>
+
+      <div class="form-group">
+        <label>Transporte (% del costo base)</label>
+        <div class="cfg-checkbox">
+          <input type="checkbox" id="cfg-autoTransport">
+          <span style="font-size:.78rem">Calcular automáticamente</span>
+        </div>
+        <input type="number" id="cfg-transportRate" value="10" min="0" max="100" placeholder="%" style="margin-top:.3rem">
+      </div>
+
+    </div>
+  </div><!-- /config -->
+
+  <!-- ==================================================================
+       TABS
+       ================================================================== -->
+  <div class="tabs">
+    <button class="tab-btn active" data-tab="personas">
+      👥 Personas <span id="bdg-personas" class="badge badge-neutral">0</span>
+    </button>
+    <button class="tab-btn" data-tab="maquinas">
+      🔧 Máquinas <span id="bdg-maquinas" class="badge badge-neutral">0</span>
+    </button>
+    <button class="tab-btn" data-tab="grupos">
+      🏭 Grupos <span id="bdg-grupos" class="badge badge-neutral">0</span>
+    </button>
+    <button class="tab-btn" data-tab="resultados">
+      📊 Resultados
+    </button>
+  </div>
+
+  <!-- ==================================================================
+       TAB: PERSONAS
+       ================================================================== -->
+  <div id="tab-personas" class="tab-content active card">
+    <h2>👥 Personas</h2>
+
+    <!-- Agregar individualmente -->
+    <div class="form-row">
+      <div class="form-group" style="flex:3">
+        <label>Nombre</label>
+        <input type="text" id="inp-person-name" placeholder="Nombre completo">
+      </div>
+      <button class="btn btn-primary" id="btn-add-person">+ Agregar</button>
+    </div>
+
+    <!-- Pegar lista -->
+    <div class="form-group mb-1">
+      <label>Pegar lista (un nombre por línea)</label>
+      <textarea id="inp-paste" placeholder="Juan García&#10;María López&#10;Carlos Martínez&#10;..."></textarea>
+    </div>
+
+    <div class="form-row mb-1">
+      <button class="btn btn-secondary" id="btn-paste-people">📋 Importar lista</button>
+      <button class="btn btn-secondary" id="btn-load-sample">🎯 Cargar datos de ejemplo</button>
+      <button class="btn btn-danger" id="btn-clear-people" style="margin-left:auto">🗑 Limpiar todo</button>
+    </div>
+
+    <div id="people-list" class="people-list">
+      <div class="empty-state" style="grid-column:1/-1">
+        <span class="ei">👤</span>
+        <p>Agrega personas manualmente o pega una lista.</p>
+      </div>
+    </div>
+    <p class="mt-05 text-muted" style="font-size:.78rem">
+      Total: <strong id="people-count">0</strong> personas
+    </p>
+  </div><!-- /tab-personas -->
+
+  <!-- ==================================================================
+       TAB: MÁQUINAS
+       ================================================================== -->
+  <div id="tab-maquinas" class="tab-content card">
+    <h2>🔧 Máquinas</h2>
+
+    <div class="form-row">
+      <div class="form-group" style="flex:3">
+        <label>Nombre</label>
+        <input type="text" id="inp-machine-name" placeholder="Nombre de la máquina">
+      </div>
+      <div class="form-group">
+        <label>Costo base ($)</label>
+        <input type="number" id="inp-machine-base" min="0" placeholder="0">
+      </div>
+      <div class="form-group">
+        <label>Transporte ($)</label>
+        <input type="number" id="inp-machine-transport" min="0" placeholder="0">
+      </div>
+      <button class="btn btn-primary" id="btn-add-machine">+ Agregar</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Nombre</th>
+            <th>Costo Base</th>
+            <th>Transporte</th>
+            <th>Costo Total</th>
+            <th>Acciones</th>
+          </tr>
+        </thead>
+        <tbody id="machines-tbody">
+          <tr><td colspan="6" class="empty-state">No hay máquinas registradas.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p class="mt-05 text-muted" style="font-size:.78rem">
+      <em>Nota: si "Calcular automáticamente" está activo en la configuración, el transporte manual se ignora y se usa el porcentaje configurado.</em>
+    </p>
+  </div><!-- /tab-maquinas -->
+
+  <!-- ==================================================================
+       TAB: GRUPOS
+       ================================================================== -->
+  <div id="tab-grupos" class="tab-content card">
+    <h2>🏭 Grupos</h2>
+
+    <!-- Panel modo automático -->
+    <div id="grupos-auto-panel">
+      <div class="alert alert-info">
+        ℹ️ En modo <strong>Automático</strong>, los grupos se crean al presionar
+        <strong>⚖️ Balancear / Optimizar Reparto</strong>. Aquí podrás verlos una
+        vez generados.
+      </div>
+    </div>
+
+    <!-- Panel modo manual -->
+    <div id="grupos-manual-panel" style="display:none">
+      <div class="form-row mb-1">
+        <button class="btn btn-secondary" id="btn-add-group">+ Nuevo grupo</button>
+        <button class="btn btn-secondary" id="btn-auto-dist">⚡ Distribuir personas automáticamente</button>
+      </div>
+    </div>
+
+    <div id="groups-container">
+      <div class="empty-state">
+        <span class="ei">🏭</span>
+        <p>Los grupos aparecerán aquí.<br>Presiona <strong>Balancear</strong> para generarlos.</p>
+      </div>
+    </div>
+  </div><!-- /tab-grupos -->
+
+  <!-- ==================================================================
+       TAB: RESULTADOS
+       ================================================================== -->
+  <div id="tab-resultados" class="tab-content card">
+    <h2>📊 Resultados</h2>
+    <div id="results-container">
+      <div class="empty-state">
+        <span class="ei">📊</span>
+        <p>Presiona <strong>⚖️ Balancear / Optimizar Reparto</strong> para calcular y ver el reparto.</p>
+      </div>
+    </div>
+  </div><!-- /tab-resultados -->
+
+</div><!-- /container -->
+
+<!-- ==================================================================
+     BARRA DE ACCIONES (fija abajo)
+     ================================================================== -->
+<div class="action-bar">
+  <button class="btn btn-success btn-lg" id="btn-optimize">⚖️ Balancear / Optimizar Reparto</button>
+  <button class="btn btn-secondary"      id="btn-export-csv">📥 Exportar CSV</button>
+  <button class="btn btn-secondary"      id="btn-export-json">📥 Exportar JSON</button>
+  <span id="status-msg"></span>
+</div>
+
+<!-- =====================================================================
+     JAVASCRIPT — TODA LA LÓGICA
+     ===================================================================== -->
+<script>
+/* ======================================================================
+   REPARTICIÓN EQUITATIVA DE MÁQUINAS — lógica completa
+   ======================================================================
+   Algoritmo de asignación:
+   - Para N ≤ 12 grupos: búsqueda exhaustiva de todas las permutaciones
+     de asignación máquina→grupo (N! iteraciones, ej. 8! = 40 320).
+   - Para N > 12: greedy óptimo por desigualdad de reordenamiento
+     (máquina más cara → grupo más grande).
+   En ambos casos se minimiza la varianza del costo por persona entre grupos.
+   ====================================================================== */
+
+/* ------------------------------------------------------------------ */
+/*  Utilidades generales                                               */
+/* ------------------------------------------------------------------ */
+
+let _uid = 1;
+const uid = () => _uid++;
+
+/** Formatea número como moneda */
+function fmt(n) {
+  if (n == null || !isFinite(n)) return '—';
+  return '$' + Number(n).toLocaleString('es-MX', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+/** Formatea porcentaje con signo */
+function fmtPct(n) {
+  if (n == null || !isFinite(n)) return '—';
+  return (n >= 0 ? '+' : '') + n.toFixed(1) + '%';
+}
+
+/** Escapa HTML para prevenir XSS */
+function esc(s) {
+  return String(s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Muestra mensaje de estado temporal en la barra inferior */
+function toast(msg, type = 'info') {
+  const el = document.getElementById('status-msg');
+  el.textContent = msg;
+  el.style.color =
+    type === 'error'   ? 'var(--danger)'  :
+    type === 'success' ? 'var(--success)' :
+    type === 'warning' ? 'var(--warning)' : 'var(--muted)';
+  clearTimeout(el._tid);
+  el._tid = setTimeout(() => { el.textContent = ''; }, 4500);
+}
+
+/** Descarga un archivo desde el navegador */
+function downloadFile(name, content, mime) {
+  const url = URL.createObjectURL(new Blob([content], { type: mime }));
+  const a   = Object.assign(document.createElement('a'), { href: url, download: name });
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+/* ------------------------------------------------------------------ */
+/*  Estado central de la aplicación                                    */
+/* ------------------------------------------------------------------ */
+
+const state = {
+  people:   [],   // [{ id, name }]
+  machines: [],   // [{ id, name, baseCost, transportCost }]
+  groups:   [],   // [{ id, name, memberIds[], machineId }]
+  results:  null, // resultado del último cálculo
+  config: {
+    numGroups:       0,   // 0 = igual al número de máquinas
+    minGroupSize:    3,
+    maxGroupSize:    5,
+    absMaxGroupSize: 7,
+    tolerancePercent: 20,
+    autoTransport:   false,
+    transportRate:   10   // % del costo base
+  },
+  mode: 'auto'  // 'auto' | 'manual'
+};
+
+/** Lee la configuración del DOM hacia state.config */
+function readConfig() {
+  state.config.numGroups        = Math.max(0, parseInt(document.getElementById('cfg-numGroups').value)   || 0);
+  state.config.minGroupSize     = Math.max(1, parseInt(document.getElementById('cfg-minSize').value)     || 3);
+  state.config.maxGroupSize     = Math.max(1, parseInt(document.getElementById('cfg-maxSize').value)     || 5);
+  state.config.absMaxGroupSize  = Math.max(1, parseInt(document.getElementById('cfg-absMax').value)      || 7);
+  state.config.tolerancePercent = Math.max(0, parseFloat(document.getElementById('cfg-tolerance').value) || 20);
+  state.config.autoTransport    = document.getElementById('cfg-autoTransport').checked;
+  state.config.transportRate    = Math.max(0, parseFloat(document.getElementById('cfg-transportRate').value) || 0);
+  state.mode                    = document.getElementById('cfg-mode').value;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Costo total de una máquina (base + transporte)                     */
+/* ------------------------------------------------------------------ */
+
+function totalCost(machine) {
+  const transport = state.config.autoTransport
+    ? machine.baseCost * (state.config.transportRate / 100)
+    : (machine.transportCost || 0);
+  return machine.baseCost + transport;
+}
+
+/* ------------------------------------------------------------------ */
+/*  PERSONAS                                                           */
+/* ------------------------------------------------------------------ */
+
+function addPerson(name) {
+  name = name.trim();
+  if (!name) return false;
+  if (state.people.some(p => p.name.toLowerCase() === name.toLowerCase())) {
+    toast(`"${name}" ya existe en la lista`, 'warning');
+    return false;
+  }
+  state.people.push({ id: uid(), name });
+  renderPeople();
+  updateBadges();
+  return true;
+}
+
+function removePerson(id) {
+  state.people = state.people.filter(p => p.id !== id);
+  // Quitar de todos los grupos
+  state.groups.forEach(g => { g.memberIds = g.memberIds.filter(mid => mid !== id); });
+  renderPeople();
+  renderGroups();
+  updateBadges();
+}
+
+function renderPeople() {
+  document.getElementById('people-count').textContent = state.people.length;
+  const container = document.getElementById('people-list');
+  if (!state.people.length) {
+    container.innerHTML = `
+      <div class="empty-state" style="grid-column:1/-1">
+        <span class="ei">👤</span>
+        <p>Agrega personas manualmente o pega una lista.</p>
+      </div>`;
+    return;
+  }
+  container.innerHTML = state.people.map(p => `
+    <div class="person-item">
+      <span title="${esc(p.name)}">${esc(p.name)}</span>
+      <button class="btn btn-danger btn-sm" onclick="removePerson(${p.id})" title="Eliminar">✕</button>
+    </div>`).join('');
+}
+
+/* ------------------------------------------------------------------ */
+/*  MÁQUINAS                                                           */
+/* ------------------------------------------------------------------ */
+
+function addMachine(name, baseCost, transportCost) {
+  name = name.trim();
+  if (!name || isNaN(baseCost) || baseCost < 0) return false;
+  state.machines.push({
+    id: uid(),
+    name,
+    baseCost:      parseFloat(baseCost),
+    transportCost: parseFloat(transportCost) || 0
+  });
+  renderMachines();
+  updateBadges();
+  return true;
+}
+
+function removeMachine(id) {
+  state.machines = state.machines.filter(m => m.id !== id);
+  state.groups.forEach(g => { if (g.machineId === id) g.machineId = null; });
+  renderMachines();
+  updateBadges();
+}
+
+function editMachineField(id, field, rawValue) {
+  const m = state.machines.find(m => m.id === id);
+  if (!m) return;
+  if (field === 'name') {
+    m.name = rawValue.trim() || m.name;
+  } else {
+    m[field] = parseFloat(rawValue) || 0;
+  }
+  renderMachines();
+}
+
+function renderMachines() {
+  const tbody = document.getElementById('machines-tbody');
+  if (!state.machines.length) {
+    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center;padding:.75rem;color:var(--muted)">No hay máquinas registradas.</td></tr>';
+    return;
+  }
+  tbody.innerHTML = state.machines.map((m, i) => {
+    const tc = totalCost(m);
+    return `
+    <tr>
+      <td>${i + 1}</td>
+      <td>
+        <input type="text" value="${esc(m.name)}" style="width:100%;min-width:150px"
+          onblur="editMachineField(${m.id},'name',this.value)"
+          onkeydown="if(event.key==='Enter')this.blur()">
+      </td>
+      <td>
+        <input type="number" value="${m.baseCost}" min="0"
+          onchange="editMachineField(${m.id},'baseCost',this.value)">
+      </td>
+      <td>
+        <input type="number" value="${m.transportCost}" min="0"
+          onchange="editMachineField(${m.id},'transportCost',this.value)"
+          ${state.config.autoTransport ? 'disabled title="Transporte calculado automáticamente"' : ''}>
+      </td>
+      <td><strong>${fmt(tc)}</strong></td>
+      <td><button class="btn btn-danger btn-sm" onclick="removeMachine(${m.id})">✕ Eliminar</button></td>
+    </tr>`;
+  }).join('');
+}
+
+/* ------------------------------------------------------------------ */
+/*  GRUPOS                                                             */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Crea grupos automáticamente distribuyendo las personas lo más uniformemente
+ * posible dentro del rango [minGroupSize, absMaxGroupSize].
+ */
+function autoCreateGroups() {
+  readConfig();
+  const { minGroupSize, absMaxGroupSize, numGroups: cfgN } = state.config;
+
+  if (!state.machines.length) { toast('Agrega al menos una máquina', 'error'); return false; }
+  if (!state.people.length)   { toast('Agrega personas primero', 'error');     return false; }
+
+  const numMachines = state.machines.length;
+  const numGroups   = cfgN > 0 ? cfgN : numMachines;
+  const n           = state.people.length;
+
+  // Advertir si los tamaños no cuadran
+  const avgSize = n / numGroups;
+  if (avgSize > absMaxGroupSize) {
+    toast(
+      `⚠ Con ${n} personas y ${numGroups} grupos el promedio es ${avgSize.toFixed(1)} > máx. absoluto ${absMaxGroupSize}. Se crearán grupos más grandes.`,
+      'warning'
+    );
+  }
+
+  // Distribuir tamaños de forma uniforme
+  const sizes = distributeEvenSizes(n, numGroups);
+
+  // Mezclar personas aleatoriamente para asignación justa
+  const shuffled = [...state.people].sort(() => Math.random() - 0.5);
+
+  state.groups = [];
+  let idx = 0;
+  for (let i = 0; i < numGroups; i++) {
+    const size = sizes[i];
+    state.groups.push({
+      id:        uid(),
+      name:      `Grupo ${i + 1}`,
+      memberIds: shuffled.slice(idx, idx + size).map(p => p.id),
+      machineId: null
+    });
+    idx += size;
+  }
+  return true;
+}
+
+/**
+ * Distribuye `total` personas en `n` grupos lo más uniformemente posible.
+ * Retorna array de tamaños (ints).
+ */
+function distributeEvenSizes(total, n) {
+  const base      = Math.floor(total / n);
+  const remainder = total % n;
+  return Array.from({ length: n }, (_, i) => i < remainder ? base + 1 : base);
+}
+
+/**
+ * Asigna máquinas a grupos buscando minimizar la varianza del costo/persona.
+ * - N ≤ 12: búsqueda exhaustiva (N! permutaciones).
+ * - N > 12: greedy (mayor costo → mayor grupo, desigualdad de reordenamiento).
+ */
+function assignMachinesOptimal() {
+  const groups   = state.groups;
+  const machines = state.machines;
+  const n        = Math.min(groups.length, machines.length);
+  if (!n) return;
+
+  const gSizes = groups.slice(0, n).map(g => g.memberIds.length);
+  const mCosts = machines.slice(0, n).map(m => totalCost(m));
+
+  let bestAssign; // bestAssign[groupIdx] = machineIdx
+
+  if (n <= 12) {
+    /* --- Búsqueda exhaustiva: todas las permutaciones de índices de máquinas --- */
+    let bestVar = Infinity;
+    const machIdx = Array.from({ length: n }, (_, i) => i);
+
+    function permute(perm, used) {
+      if (perm.length === n) {
+        // costo por persona para esta asignación
+        let sum = 0;
+        const cpp = perm.map((mi, gi) => {
+          const v = gSizes[gi] > 0 ? mCosts[mi] / gSizes[gi] : 0;
+          sum += v;
+          return v;
+        });
+        const avg = sum / n;
+        let variance = 0;
+        for (let i = 0; i < n; i++) variance += (cpp[i] - avg) ** 2;
+        if (variance < bestVar) { bestVar = variance; bestAssign = [...perm]; }
+        return;
+      }
+      for (let i = 0; i < n; i++) {
+        if (!used[i]) {
+          used[i] = true;
+          perm.push(i);
+          permute(perm, used);
+          perm.pop();
+          used[i] = false;
+        }
+      }
+    }
+
+    permute([], new Array(n).fill(false));
+
+  } else {
+    /* --- Greedy: parear máquina más cara con grupo más grande --- */
+    const sortedM = mCosts
+      .map((c, i) => ({ c, i })).sort((a, b) => b.c - a.c).map(x => x.i);
+    const sortedG = gSizes
+      .map((s, i) => ({ s, i })).sort((a, b) => b.s - a.s).map(x => x.i);
+
+    bestAssign = new Array(n);
+    for (let i = 0; i < n; i++) bestAssign[sortedG[i]] = sortedM[i];
+  }
+
+  // Aplicar la mejor asignación encontrada
+  groups.forEach(g => (g.machineId = null));
+  for (let i = 0; i < n; i++) {
+    groups[i].machineId = machines[bestAssign[i]].id;
+  }
+}
+
+/* --- CRUD manual de grupos --- */
+
+function addGroup() {
+  state.groups.push({
+    id: uid(), name: `Grupo ${state.groups.length + 1}`, memberIds: [], machineId: null
+  });
+  renderGroups();
+  updateBadges();
+}
+
+function removeGroup(id) {
+  state.groups = state.groups.filter(g => g.id !== id);
+  renderGroups();
+  updateBadges();
+}
+
+function renameGroup(id, name) {
+  const g = state.groups.find(g => g.id === id);
+  if (g && name.trim()) g.name = name.trim();
+}
+
+function assignMachineManual(groupId, machineId) {
+  // Quitar la misma máquina de cualquier otro grupo para evitar duplicados
+  state.groups.forEach(g => { if (g.machineId === machineId) g.machineId = null; });
+  const g = state.groups.find(g => g.id === groupId);
+  if (g) g.machineId = machineId || null;
+}
+
+function removePersonFromGroup(personId) {
+  state.groups.forEach(g => { g.memberIds = g.memberIds.filter(id => id !== personId); });
+  renderGroups();
+}
+
+/** Distribuye las personas de forma uniforme en los grupos ya existentes */
+function autoDistribute() {
+  readConfig();
+  if (!state.groups.length) { toast('Crea al menos un grupo primero', 'error'); return; }
+  if (!state.people.length) { toast('Agrega personas primero', 'error'); return; }
+
+  state.groups.forEach(g => (g.memberIds = []));
+  const shuffled = [...state.people].sort(() => Math.random() - 0.5);
+  const sizes    = distributeEvenSizes(shuffled.length, state.groups.length);
+
+  let idx = 0;
+  state.groups.forEach((g, i) => {
+    g.memberIds = shuffled.slice(idx, idx + sizes[i]).map(p => p.id);
+    idx += sizes[i];
+  });
+  renderGroups();
+  toast('Personas distribuidas automáticamente', 'success');
+}
+
+/* --- Renderizado de grupos --- */
+
+function renderGroups() {
+  updateBadges();
+  const container = document.getElementById('groups-container');
+
+  if (!state.groups.length) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <span class="ei">🏭</span>
+        <p>Los grupos aparecerán aquí.<br>Presiona <strong>Balancear</strong> para generarlos.</p>
+      </div>`;
+    return;
+  }
+
+  if (state.mode === 'auto') {
+    renderGroupsReadOnly(container);
+  } else {
+    renderGroupsManual(container);
+  }
+}
+
+/** Vista solo-lectura en modo automático */
+function renderGroupsReadOnly(container) {
+  const cards = state.groups.map(g => {
+    const members = g.memberIds.map(id => state.people.find(p => p.id === id)).filter(Boolean);
+    const machine = g.machineId ? state.machines.find(m => m.id === g.machineId) : null;
+    const tc  = machine ? totalCost(machine) : 0;
+    const cpp = members.length && machine ? tc / members.length : 0;
+    return `
+      <div class="group-card">
+        <div class="group-card-hd">
+          <h3>${esc(g.name)}</h3>
+          <span class="badge badge-info">${members.length} personas</span>
+        </div>
+        <div class="group-card-bd">
+          <div class="g-stat"><span class="k">Máquina</span>     <span class="v">${machine ? esc(machine.name) : '—'}</span></div>
+          <div class="g-stat"><span class="k">Costo total</span> <span class="v">${fmt(tc)}</span></div>
+          <div class="g-stat"><span class="k">Costo/persona</span><span class="v">${cpp ? fmt(cpp) : '—'}</span></div>
+          <div class="group-members">
+            <h4>Miembros</h4>
+            <ul>${members.map(p => `<li>${esc(p.name)}</li>`).join('')}</ul>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `<div class="results-grid">${cards}</div>`;
+}
+
+/** Vista editable con drag-and-drop en modo manual */
+function renderGroupsManual(container) {
+  const assignedIds = new Set(state.groups.flatMap(g => g.memberIds));
+  const unassigned  = state.people.filter(p => !assignedIds.has(p.id));
+
+  const poolHtml = `
+    <div class="pool-panel card" style="padding:.75rem">
+      <h3>Sin grupo (${unassigned.length})</h3>
+      <div class="drop-zone" id="zone-pool"
+           ondragover="onDragOver(event)" ondrop="onDrop(event,'pool')"
+           ondragleave="onDragLeave(event)">
+        ${unassigned.map(p => chipHtml(p)).join('')}
+        ${!unassigned.length ? '<span class="empty-hint">Todas las personas están en un grupo</span>' : ''}
+      </div>
+    </div>`;
+
+  const groupCards = state.groups.map(g => {
+    const members     = g.memberIds.map(id => state.people.find(p => p.id === id)).filter(Boolean);
+    const machOpts    = state.machines.map(m =>
+      `<option value="${m.id}" ${g.machineId === m.id ? 'selected' : ''}>${esc(m.name)} (${fmt(totalCost(m))})</option>`
+    ).join('');
+
+    return `
+      <div class="mg-card">
+        <div class="mg-header">
+          <input type="text" value="${esc(g.name)}"
+            onblur="renameGroup(${g.id}, this.value)"
+            onkeydown="if(event.key==='Enter')this.blur()">
+          <span class="badge badge-neutral">${members.length}</span>
+          <button class="btn btn-danger btn-sm" onclick="removeGroup(${g.id})" title="Eliminar grupo">✕</button>
+        </div>
+        <div class="mg-body">
+          <div class="drop-zone" id="zone-${g.id}"
+               ondragover="onDragOver(event)" ondrop="onDrop(event,${g.id})"
+               ondragleave="onDragLeave(event)">
+            ${members.map(p => chipHtml(p)).join('')}
+            ${!members.length ? '<span class="empty-hint">Arrastra personas aquí</span>' : ''}
+          </div>
+          <div class="mg-machine-row">
+            <label>Máquina:</label>
+            <select style="flex:1" onchange="assignMachineManual(${g.id}, parseInt(this.value)||null)">
+              <option value="">— Sin asignar —</option>
+              ${machOpts}
+            </select>
+          </div>
+        </div>
+      </div>`;
+  }).join('');
+
+  container.innerHTML = `
+    <div class="manual-layout">
+      ${poolHtml}
+      <div class="manual-groups-grid">${groupCards}</div>
+    </div>`;
+}
+
+function chipHtml(p) {
+  return `
+    <div class="person-chip" draggable="true" id="chip-${p.id}"
+         ondragstart="onDragStart(event,${p.id})">
+      ${esc(p.name)}
+      <span class="chip-rm" onclick="removePersonFromGroup(${p.id})" title="Quitar del grupo">✕</span>
+    </div>`;
+}
+
+/* ------------------------------------------------------------------ */
+/*  Drag & Drop                                                        */
+/* ------------------------------------------------------------------ */
+
+let _dragId = null;
+
+function onDragStart(ev, personId) {
+  _dragId = personId;
+  ev.dataTransfer.effectAllowed = 'move';
+}
+function onDragOver(ev) {
+  ev.preventDefault();
+  ev.currentTarget.classList.add('drag-over');
+  ev.dataTransfer.dropEffect = 'move';
+}
+function onDragLeave(ev) {
+  // Solo quitar la clase si no hay un hijo del drop-zone en relatedTarget
+  if (!ev.currentTarget.contains(ev.relatedTarget)) {
+    ev.currentTarget.classList.remove('drag-over');
+  }
+}
+function onDrop(ev, target) {
+  ev.preventDefault();
+  ev.currentTarget.classList.remove('drag-over');
+  if (_dragId == null) return;
+
+  // Quitar de todos los grupos
+  state.groups.forEach(g => { g.memberIds = g.memberIds.filter(id => id !== _dragId); });
+
+  // Agregar al grupo destino (o dejar sin grupo si target === 'pool')
+  if (target !== 'pool') {
+    const g = state.groups.find(g => g.id === target);
+    if (g && !g.memberIds.includes(_dragId)) g.memberIds.push(_dragId);
+  }
+
+  renderGroups();
+  _dragId = null;
+}
+
+/* ------------------------------------------------------------------ */
+/*  CÁLCULO DE ESTADÍSTICAS                                            */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Calcula estadísticas del reparto actual.
+ * Retorna un objeto con groupStats, totales y métricas de equilibrio.
+ */
+function calculateResults() {
+  const valid = state.groups.filter(g => g.machineId && g.memberIds.length > 0);
+  if (!valid.length) return null;
+
+  const groupStats = valid.map(g => {
+    const machine = state.machines.find(m => m.id === g.machineId);
+    const members = g.memberIds.map(id => state.people.find(p => p.id === id)).filter(Boolean);
+    const tc      = totalCost(machine);
+    const cpp     = tc / members.length;
+    return { group: g, machine, members, total: tc, cpp, size: members.length };
+  });
+
+  const totalAllCosts  = groupStats.reduce((s, x) => s + x.total, 0);
+  const totalAllPeople = groupStats.reduce((s, x) => s + x.size,  0);
+  const globalAvg      = totalAllCosts / totalAllPeople;   // promedio ponderado (global justo)
+
+  // Varianza simple del costo por persona entre grupos
+  const cppArr  = groupStats.map(x => x.cpp);
+  const avgCpp  = cppArr.reduce((a, b) => a + b, 0) / cppArr.length;
+  const variance = cppArr.reduce((s, x) => s + (x - avgCpp) ** 2, 0) / cppArr.length;
+  const stdDev  = Math.sqrt(variance);
+  const cvPct   = globalAvg > 0 ? (stdDev / globalAvg) * 100 : 0; // coeficiente de variación
+
+  const tol = state.config.tolerancePercent;
+
+  groupStats.forEach(s => {
+    s.deviation    = s.cpp - globalAvg;
+    s.pctDeviation = globalAvg > 0 ? (s.deviation / globalAvg) * 100 : 0;
+    s.isOver       = s.pctDeviation >  tol;
+    s.isUnder      = s.pctDeviation < -tol;
+  });
+
+  return {
+    groupStats,
+    totalAllCosts, totalAllPeople,
+    globalAvg, avgCpp, stdDev, cvPct,
+    isBalanced: cvPct <= tol
+  };
+}
+
+/* ------------------------------------------------------------------ */
+/*  RENDERIZADO DE RESULTADOS                                          */
+/* ------------------------------------------------------------------ */
+
+function renderResults(res) {
+  const container = document.getElementById('results-container');
+  if (!res) {
+    container.innerHTML = `
+      <div class="empty-state">
+        <span class="ei">📊</span>
+        <p>Presiona <strong>⚖️ Balancear / Optimizar Reparto</strong> para ver el reparto.</p>
+      </div>`;
+    return;
+  }
+  state.results = res;
+
+  /* Alerta global */
+  const alertHtml = res.isBalanced
+    ? `<div class="alert alert-success">✅ Reparto equilibrado — Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong> (tolerancia: ${state.config.tolerancePercent}%)</div>`
+    : `<div class="alert alert-warning">⚠️ Algunos grupos superan la tolerancia de ${state.config.tolerancePercent}% — Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong></div>`;
+
+  /* Cajas de métricas */
+  const statsHtml = `
+    <div class="stats-row">
+      <div class="stat-box"><div class="slabel">Total personas</div>  <div class="svalue">${res.totalAllPeople}</div></div>
+      <div class="stat-box"><div class="slabel">Grupos con máquina</div><div class="svalue">${res.groupStats.length}</div></div>
+      <div class="stat-box"><div class="slabel">Costo total</div>      <div class="svalue" style="font-size:.95rem">${fmt(res.totalAllCosts)}</div></div>
+      <div class="stat-box"><div class="slabel">Promedio global/persona</div><div class="svalue" style="font-size:.95rem">${fmt(res.globalAvg)}</div></div>
+      <div class="stat-box"><div class="slabel">Desv. estándar ($/persona)</div><div class="svalue" style="font-size:.95rem">${fmt(res.stdDev)}</div></div>
+      <div class="stat-box">
+        <div class="slabel">Coef. de variación</div>
+        <div class="svalue" style="color:${res.isBalanced ? 'var(--success)' : 'var(--warning)'}">${res.cvPct.toFixed(1)}%</div>
+      </div>
+    </div>`;
+
+  /* Tabla resumen */
+  const tableHtml = `
+    <div class="table-wrap" style="margin-bottom:1.5rem">
+      <table>
+        <thead>
+          <tr>
+            <th>Grupo</th><th>Máquina</th><th>Personas</th>
+            <th>Costo total</th><th>Costo/persona</th>
+            <th>Desv. $</th><th>Desv. %</th><th>Estado</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${res.groupStats.map(s => {
+            const cls   = s.isOver ? 'over' : s.isUnder ? 'under' : 'ok';
+            const badge = s.isOver
+              ? `<span class="badge badge-danger">⬆ Por encima</span>`
+              : s.isUnder
+                ? `<span class="badge badge-warning">⬇ Por debajo</span>`
+                : `<span class="badge badge-success">✓ OK</span>`;
+            return `
+            <tr>
+              <td><strong>${esc(s.group.name)}</strong></td>
+              <td>${esc(s.machine.name)}</td>
+              <td>${s.size}</td>
+              <td>${fmt(s.total)}</td>
+              <td>${fmt(s.cpp)}</td>
+              <td class="${cls}">${fmt(s.deviation)}</td>
+              <td class="${cls}">${fmtPct(s.pctDeviation)}</td>
+              <td>${badge}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`;
+
+  /* Cards detalladas por grupo */
+  const cardsHtml = `
+    <div class="results-grid">
+      ${res.groupStats.map(s => {
+        const barColor = s.isOver ? 'var(--danger)' : s.isUnder ? 'var(--warning)' : 'var(--success)';
+        const barPct   = Math.min(100, Math.abs(s.pctDeviation)).toFixed(1);
+        return `
+        <div class="group-card">
+          <div class="group-card-hd">
+            <h3>${esc(s.group.name)}</h3>
+            <span class="badge ${s.isOver ? 'badge-danger' : s.isUnder ? 'badge-warning' : 'badge-success'}">
+              ${fmtPct(s.pctDeviation)} vs. prom.
+            </span>
+          </div>
+          <div class="group-card-bd">
+            <div class="g-stat"><span class="k">Máquina</span>        <span class="v">${esc(s.machine.name)}</span></div>
+            <div class="g-stat"><span class="k">Personas</span>       <span class="v">${s.size}</span></div>
+            <div class="g-stat"><span class="k">Costo total</span>    <span class="v">${fmt(s.total)}</span></div>
+            <div class="g-stat"><span class="k">Costo/persona</span>  <span class="v">${fmt(s.cpp)}</span></div>
+            <div class="g-stat"><span class="k">Prom. global/p.</span><span class="v">${fmt(res.globalAvg)}</span></div>
+            <div class="g-stat">
+              <span class="k">Desviación</span>
+              <span class="v" style="color:${barColor}">${fmt(s.deviation)} (${fmtPct(s.pctDeviation)})</span>
+            </div>
+            <div class="dev-bar-wrap">
+              <div class="dev-bar" style="width:${barPct}%;background:${barColor}"></div>
+            </div>
+            <div class="group-members">
+              <h4>Miembros (${s.size})</h4>
+              <ul>${s.members.map(p => `<li>${esc(p.name)}</li>`).join('')}</ul>
+            </div>
+          </div>
+        </div>`;
+      }).join('')}
+    </div>`;
+
+  /* Advertencias individuales */
+  const overTol = res.groupStats.filter(s => s.isOver || s.isUnder);
+  const warningsHtml = overTol.length
+    ? overTol.map(s => `
+        <div class="alert alert-warning">
+          ⚠ <strong>${esc(s.group.name)}</strong> (${esc(s.machine.name)}):
+          costo/persona ${fmt(s.cpp)} está ${s.isOver ? 'un' : 'un'} ${Math.abs(s.pctDeviation).toFixed(1)}%
+          ${s.isOver ? 'por encima' : 'por debajo'} del promedio (${fmt(res.globalAvg)}).
+        </div>`).join('')
+    : '';
+
+  container.innerHTML = alertHtml + statsHtml + warningsHtml + tableHtml + cardsHtml;
+}
+
+/* ------------------------------------------------------------------ */
+/*  FLUJO PRINCIPAL: OPTIMIZAR                                         */
+/* ------------------------------------------------------------------ */
+
+function optimize() {
+  readConfig();
+
+  if (state.mode === 'auto') {
+    if (!autoCreateGroups()) return;
+  } else {
+    if (!state.groups.length) {
+      toast('En modo manual, crea grupos en la pestaña Grupos primero', 'error');
+      return;
+    }
+  }
+
+  // Advertir si hay más máquinas que grupos o viceversa
+  const ng = state.groups.length;
+  const nm = state.machines.length;
+  if (ng < nm) {
+    toast(`⚠ Hay ${nm} máquinas pero solo ${ng} grupos. ${nm - ng} máquina(s) no serán asignadas.`, 'warning');
+  } else if (ng > nm) {
+    toast(`⚠ Hay más grupos (${ng}) que máquinas (${nm}). ${ng - nm} grupo(s) no recibirán máquina.`, 'warning');
+  }
+
+  assignMachinesOptimal();
+  renderGroups();
+  updateBadges();
+
+  const results = calculateResults();
+  renderResults(results);
+  switchTab('resultados');
+  if (results) {
+    toast(
+      results.isBalanced
+        ? `✅ Reparto equilibrado — CV: ${results.cvPct.toFixed(1)}%`
+        : `⚠ Reparto con desequilibrio — CV: ${results.cvPct.toFixed(1)}%`,
+      results.isBalanced ? 'success' : 'warning'
+    );
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  EXPORTAR                                                           */
+/* ------------------------------------------------------------------ */
+
+function exportCSV() {
+  if (!state.results) { toast('Primero optimiza el reparto', 'error'); return; }
+
+  const rows = [
+    ['Grupo','Máquina','Costo Base','Costo Transporte','Costo Total',
+     'Núm Personas','Costo por Persona','Desviación $','Desviación %','Miembros']
+  ];
+  state.results.groupStats.forEach(s => {
+    rows.push([
+      s.group.name,
+      s.machine.name,
+      s.machine.baseCost,
+      s.machine.transportCost,
+      s.total.toFixed(2),
+      s.size,
+      s.cpp.toFixed(2),
+      s.deviation.toFixed(2),
+      s.pctDeviation.toFixed(2) + '%',
+      s.members.map(p => p.name).join(' | ')
+    ]);
+  });
+  // Resumen
+  rows.push([]);
+  rows.push(['RESUMEN']);
+  rows.push(['Total personas', state.results.totalAllPeople]);
+  rows.push(['Total grupos', state.results.groupStats.length]);
+  rows.push(['Costo total', state.results.totalAllCosts.toFixed(2)]);
+  rows.push(['Promedio global por persona', state.results.globalAvg.toFixed(2)]);
+  rows.push(['Desviación estándar', state.results.stdDev.toFixed(2)]);
+  rows.push(['Coeficiente de variación %', state.results.cvPct.toFixed(2)]);
+
+  const csv = rows
+    .map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+  downloadFile('reparto_maquinas.csv', '\uFEFF' + csv, 'text/csv;charset=utf-8');
+  toast('CSV descargado', 'success');
+}
+
+function exportJSON() {
+  if (!state.results) { toast('Primero optimiza el reparto', 'error'); return; }
+
+  const data = {
+    fecha: new Date().toISOString(),
+    configuracion: {
+      numGrupos: state.groups.length,
+      tamMin: state.config.minGroupSize,
+      tamMax: state.config.maxGroupSize,
+      tamMaxAbsoluto: state.config.absMaxGroupSize,
+      toleranciaPct: state.config.tolerancePercent,
+      transporteAutomatico: state.config.autoTransport,
+      tasaTransporte: state.config.transportRate
+    },
+    resumen: {
+      totalPersonas: state.results.totalAllPeople,
+      totalGrupos: state.results.groupStats.length,
+      costoTotal: +state.results.totalAllCosts.toFixed(2),
+      promedioGlobalPorPersona: +state.results.globalAvg.toFixed(2),
+      desviacionEstandar: +state.results.stdDev.toFixed(2),
+      coeficienteVariacion: +state.results.cvPct.toFixed(2),
+      equilibrado: state.results.isBalanced
+    },
+    grupos: state.results.groupStats.map(s => ({
+      nombre: s.group.name,
+      maquina: {
+        nombre: s.machine.name,
+        costoBase: s.machine.baseCost,
+        costoTransporte: s.machine.transportCost,
+        costoTotal: +s.total.toFixed(2)
+      },
+      numPersonas: s.size,
+      costoPorPersona: +s.cpp.toFixed(2),
+      desviacion: +s.deviation.toFixed(2),
+      desviacionPct: +s.pctDeviation.toFixed(2),
+      estado: s.isOver ? 'por_encima' : s.isUnder ? 'por_debajo' : 'ok',
+      miembros: s.members.map(p => p.name)
+    }))
+  };
+
+  downloadFile('reparto_maquinas.json', JSON.stringify(data, null, 2), 'application/json');
+  toast('JSON descargado', 'success');
+}
+
+/* ------------------------------------------------------------------ */
+/*  TABS                                                               */
+/* ------------------------------------------------------------------ */
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.querySelectorAll('.tab-content').forEach(t => t.classList.toggle('active', t.id === `tab-${name}`));
+}
+
+/* ------------------------------------------------------------------ */
+/*  BADGES                                                             */
+/* ------------------------------------------------------------------ */
+
+function updateBadges() {
+  document.getElementById('bdg-personas').textContent = state.people.length;
+  document.getElementById('bdg-maquinas').textContent = state.machines.length;
+  document.getElementById('bdg-grupos').textContent   = state.groups.length;
+}
+
+/* ------------------------------------------------------------------ */
+/*  DATOS DE EJEMPLO                                                   */
+/* ------------------------------------------------------------------ */
+
+function loadSampleData() {
+  /* 52 personas */
+  const names = [
+    'Ana García','Carlos López','María Martínez','José Hernández','Laura González',
+    'Miguel Rodríguez','Sofía Pérez','David Sánchez','Elena Ramírez','Luis Torres',
+    'Isabel Flores','Roberto Díaz','Patricia Cruz','Fernando Morales','Carmen Jiménez',
+    'Alejandro Reyes','Valeria Ortiz','Ricardo Gutiérrez','Adriana Vargas','Sergio Ramos',
+    'Claudia Moreno','Héctor Mendoza','Gabriela Castillo','Ernesto Silva','Verónica Herrera',
+    'Óscar Aguilar','Natalia Medina','Arturo Romero','Liliana Navarro','Marcos Domínguez',
+    'Sandra Alvarado','Benjamín Castro','Diana Vega','Rodrigo Ríos','Marcela Guerrero',
+    'Javier Campos','Rebeca Soto','Eduardo Espinoza','Lucía Cortés','Raúl Ibáñez',
+    'Mariana Delgado','Ignacio Rivas','Gloria Palacios','Mauricio Fuentes','Fabiola Luna',
+    'Andrés Montes','Norma Acosta','Guillermo Bravo','Angélica Salazar','Tomás Peña',
+    'Estela Méndez','Víctor Barrera'
+  ];
+
+  /* 8 máquinas industriales con costos distintos */
+  const machines = [
+    { name: 'Grúa Viajera 5 ton',           baseCost: 210000, transportCost: 18000 },
+    { name: 'Centro de Maquinado CNC',        baseCost: 185000, transportCost: 12000 },
+    { name: 'Cortadora Láser CO₂',            baseCost: 155000, transportCost: 11000 },
+    { name: 'Torno CNC Horizontal',           baseCost: 120000, transportCost:  9500 },
+    { name: 'Fresadora Vertical',             baseCost:  95000, transportCost:  7000 },
+    { name: 'Dobladora de Lámina',            baseCost:  72000, transportCost:  5500 },
+    { name: 'Compresor Industrial 50 HP',     baseCost:  45000, transportCost:  3200 },
+    { name: 'Soldadora MIG/MAG Industrial',   baseCost:  38000, transportCost:  2500 }
+  ];
+
+  state.people   = names.map(n => ({ id: uid(), name: n }));
+  state.machines = machines.map(m => ({ id: uid(), ...m }));
+  state.groups   = [];
+  state.results  = null;
+
+  renderPeople();
+  renderMachines();
+  renderGroups();
+  renderResults(null);
+  updateBadges();
+  toast('✅ Datos de ejemplo cargados: 52 personas · 8 máquinas', 'success');
+}
+
+/* ------------------------------------------------------------------ */
+/*  INICIALIZACIÓN                                                     */
+/* ------------------------------------------------------------------ */
+
+document.addEventListener('DOMContentLoaded', () => {
+
+  /* --- Tabs --- */
+  document.querySelectorAll('.tab-btn').forEach(btn => {
+    btn.addEventListener('click', () => switchTab(btn.dataset.tab));
+  });
+
+  /* --- Modo (auto / manual) --- */
+  document.getElementById('cfg-mode').addEventListener('change', e => {
+    state.mode = e.target.value;
+    document.getElementById('grupos-auto-panel').style.display   = state.mode === 'auto'   ? '' : 'none';
+    document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
+    renderGroups();
+  });
+
+  /* --- Config: transporte automático --- */
+  document.getElementById('cfg-autoTransport').addEventListener('change', () => {
+    readConfig();
+    renderMachines();
+  });
+  document.getElementById('cfg-transportRate').addEventListener('change', () => {
+    readConfig();
+    renderMachines();
+  });
+
+  /* --- Personas: agregar uno a uno --- */
+  const inpPersonName = document.getElementById('inp-person-name');
+  document.getElementById('btn-add-person').addEventListener('click', () => {
+    if (addPerson(inpPersonName.value)) {
+      inpPersonName.value = '';
+      inpPersonName.focus();
+    }
+  });
+  inpPersonName.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-add-person').click();
+  });
+
+  /* --- Personas: pegar lista --- */
+  document.getElementById('btn-paste-people').addEventListener('click', () => {
+    const lines = document.getElementById('inp-paste').value
+      .split('\n')
+      .map(l => l.trim())
+      .filter(Boolean);
+    let added = 0;
+    lines.forEach(n => { if (addPerson(n)) added++; });
+    document.getElementById('inp-paste').value = '';
+    if (added) toast(`${added} persona(s) importada(s)`, 'success');
+  });
+
+  /* --- Personas: cargar datos de ejemplo --- */
+  document.getElementById('btn-load-sample').addEventListener('click', () => {
+    if ((state.people.length || state.machines.length) &&
+        !confirm('¿Reemplazar los datos actuales con los datos de ejemplo?')) return;
+    loadSampleData();
+  });
+
+  /* --- Personas: limpiar todo --- */
+  document.getElementById('btn-clear-people').addEventListener('click', () => {
+    if (!confirm('¿Eliminar todas las personas? Se limpiarán los grupos también.')) return;
+    state.people = [];
+    state.groups.forEach(g => (g.memberIds = []));
+    renderPeople();
+    renderGroups();
+    updateBadges();
+  });
+
+  /* --- Máquinas: agregar --- */
+  const inpMachineName = document.getElementById('inp-machine-name');
+  document.getElementById('btn-add-machine').addEventListener('click', () => {
+    const name      = inpMachineName.value;
+    const base      = parseFloat(document.getElementById('inp-machine-base').value);
+    const transport = parseFloat(document.getElementById('inp-machine-transport').value) || 0;
+    if (!name.trim())   { toast('Escribe un nombre para la máquina', 'error'); return; }
+    if (isNaN(base))    { toast('Ingresa el costo base', 'error'); return; }
+    if (addMachine(name, base, transport)) {
+      inpMachineName.value = '';
+      document.getElementById('inp-machine-base').value      = '';
+      document.getElementById('inp-machine-transport').value = '';
+      inpMachineName.focus();
+    }
+  });
+  inpMachineName.addEventListener('keydown', e => {
+    if (e.key === 'Enter') document.getElementById('btn-add-machine').click();
+  });
+
+  /* --- Grupos: nuevo (manual) --- */
+  document.getElementById('btn-add-group').addEventListener('click', addGroup);
+
+  /* --- Grupos: distribuir automáticamente (manual) --- */
+  document.getElementById('btn-auto-dist').addEventListener('click', autoDistribute);
+
+  /* --- Acción principal: optimizar --- */
+  document.getElementById('btn-optimize').addEventListener('click', optimize);
+
+  /* --- Exportar --- */
+  document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
+  document.getElementById('btn-export-json').addEventListener('click', exportJSON);
+
+  /* --- Cargar datos de ejemplo al iniciar --- */
+  loadSampleData();
+
+  updateBadges();
+});
+</script>
+</body>
+</html>
