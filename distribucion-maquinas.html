@@ -1376,7 +1376,7 @@ function renderResults(res) {
     ? overTol.map(s => `
         <div class="alert alert-warning">
           ⚠ <strong>${esc(s.group.name)}</strong> (${esc(s.machine.name)}):
-          costo/persona ${fmt(s.cpp)} está ${s.isOver ? 'un' : 'un'} ${Math.abs(s.pctDeviation).toFixed(1)}%
+          costo/persona ${fmt(s.cpp)} está un ${Math.abs(s.pctDeviation).toFixed(1)}%
           ${s.isOver ? 'por encima' : 'por debajo'} del promedio (${fmt(res.globalAvg)}).
         </div>`).join('')
     : '';
@@ -1555,7 +1555,7 @@ function loadSampleData() {
   const machines = [
     { name: 'Grúa Viajera 5 ton',           baseCost: 210000, transportCost: 18000 },
     { name: 'Centro de Maquinado CNC',        baseCost: 185000, transportCost: 12000 },
-    { name: 'Cortadora Láser CO₂',            baseCost: 155000, transportCost: 11000 },
+    { name: 'Cortadora Láser CO2',             baseCost: 155000, transportCost: 11000 },
     { name: 'Torno CNC Horizontal',           baseCost: 120000, transportCost:  9500 },
     { name: 'Fresadora Vertical',             baseCost:  95000, transportCost:  7000 },
     { name: 'Dobladora de Lámina',            baseCost:  72000, transportCost:  5500 },
