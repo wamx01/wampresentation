@@ -889,8 +889,9 @@ function renderMachines() {
 /* ------------------------------------------------------------------ */
 
 /**
- * Crea grupos automáticamente distribuyendo las personas lo más uniformemente
- * posible dentro del rango [minGroupSize, absMaxGroupSize].
+ * Crea grupos automáticamente con tamaños PROPORCIONALES al costo de cada
+ * máquina para maximizar el equilibrio del costo/persona entre grupos.
+ * Los tamaños se calculan con el método Hamilton + refinamiento iterativo.
  */
 function autoCreateGroups() {
   readConfig();
@@ -903,7 +904,14 @@ function autoCreateGroups() {
   const numGroups   = cfgN > 0 ? cfgN : numMachines;
   const n           = state.people.length;
 
-  // Advertir si los tamaños no cuadran
+  // Ordenar máquinas por costo descendente para alinear con los tamaños óptimos
+  const sortedMachines = [...state.machines]
+    .slice(0, numGroups)
+    .sort((a, b) => totalCost(b) - totalCost(a));
+
+  const costs = sortedMachines.map(m => totalCost(m));
+
+  // Advertir si el tamaño promedio supera el máximo absoluto
   const avgSize = n / numGroups;
   if (avgSize > absMaxGroupSize) {
     toast(
@@ -912,16 +920,16 @@ function autoCreateGroups() {
     );
   }
 
-  // Distribuir tamaños de forma uniforme
-  const sizes = distributeEvenSizes(n, numGroups);
+  // Tamaños proporcionales a costos (Hamilton + ascenso de colina)
+  const sizes = computeProportionalSizes(costs, n, minGroupSize, absMaxGroupSize);
 
-  // Mezclar personas aleatoriamente para asignación justa
+  // Mezclar personas aleatoriamente
   const shuffled = [...state.people].sort(() => Math.random() - 0.5);
 
   state.groups = [];
   let idx = 0;
   for (let i = 0; i < numGroups; i++) {
-    const size = sizes[i];
+    const size = i < sizes.length ? sizes[i] : 0;
     state.groups.push({
       id:        uid(),
       name:      `Grupo ${i + 1}`,
@@ -941,6 +949,107 @@ function distributeEvenSizes(total, n) {
   const base      = Math.floor(total / n);
   const remainder = total % n;
   return Array.from({ length: n }, (_, i) => i < remainder ? base + 1 : base);
+}
+
+/**
+ * Calcula tamaños de grupo proporcionales a los costos de cada máquina usando
+ * el método Hamilton (mayores restos) para la asignación entera.
+ * Luego aplica refinamiento por ascenso de colina: mueve una persona entre
+ * pares de grupos si reduce la varianza del costo/persona, iterando hasta
+ * convergencia (equilibrio perfecto o mínimo local).
+ *
+ * @param {number[]} costs     - costo total de cada máquina (mismo orden)
+ * @param {number}   total     - número total de personas
+ * @param {number}   minSize   - tamaño mínimo de grupo (≥1)
+ * @param {number}   maxSize   - tamaño máximo absoluto (0 = sin límite)
+ * @returns {number[]} array de tamaños alineado con `costs`
+ */
+function computeProportionalSizes(costs, total, minSize, maxSize) {
+  const n = costs.length;
+  if (n === 0) return [];
+
+  const totalCostVal = costs.reduce((a, b) => a + b, 0);
+  if (totalCostVal === 0) return distributeEvenSizes(total, n);
+
+  // Fase 1: Hamilton — tamaños ideales proporcionales al costo
+  const ideal = costs.map(c => (total * c) / totalCostVal);
+  let sizes   = ideal.map(x => Math.max(minSize, Math.floor(x)));
+  let allocated = sizes.reduce((a, b) => a + b, 0);
+  let remaining = total - allocated;
+
+  if (remaining > 0) {
+    // Añadir personas sobrantes a los grupos con mayor parte fraccionaria
+    const fracs = ideal
+      .map((x, i) => ({ i, frac: x - Math.floor(x) }))
+      .sort((a, b) => b.frac - a.frac);
+    for (let k = 0; k < remaining && k < n; k++) sizes[fracs[k].i]++;
+  } else if (remaining < 0) {
+    // Sobre-asignación por minSize: reducir los grupos más alejados del mínimo
+    const excess = -remaining;
+    const trimOrder = [...Array(n).keys()]
+      .sort((a, b) => (sizes[b] - minSize) - (sizes[a] - minSize));
+    for (let k = 0; k < excess; k++) {
+      if (sizes[trimOrder[k]] > minSize) sizes[trimOrder[k]]--;
+    }
+  }
+
+  // Aplicar tope de maxSize
+  if (maxSize > 0) {
+    sizes = sizes.map(s => Math.min(s, maxSize));
+    // Redistribuir el excedente a grupos con espacio libre
+    let over = total - sizes.reduce((a, b) => a + b, 0);
+    if (over > 0) {
+      const withRoom = [...Array(n).keys()].filter(i => sizes[i] < maxSize);
+      const fracs2 = ideal.map((x, i) => ({ i, frac: x - Math.floor(x) }))
+        .filter(({ i }) => sizes[i] < maxSize)
+        .sort((a, b) => b.frac - a.frac);
+      for (let k = 0; over > 0 && k < fracs2.length; k++) {
+        sizes[fracs2[k].i]++;
+        over--;
+      }
+    }
+  }
+
+  // Fase 2: Refinamiento iterativo (ascenso de colina)
+  // Mueve una persona entre pares de grupos si mejora la varianza de CPP
+  // (la asignación óptima para comparar es: mayor costo → mayor grupo)
+  function cppVariance(sz) {
+    const sorted = [...sz].map((s, i) => ({ s, c: costs[i] }))
+      .sort((a, b) => b.c - a.c);
+    const sortedBySz = [...sorted].sort((a, b) => b.s - a.s);
+    // Par costo↓ con tamaño↓ para calcular CPP asumiendo la asignación óptima
+    const cpps = sorted.map((mc, k) => {
+      const sz2 = sortedBySz[k].s;
+      return sz2 > 0 ? mc.c / sz2 : 0;
+    });
+    const avg = cpps.reduce((a, b) => a + b, 0) / cpps.length;
+    return cpps.reduce((s, x) => s + (x - avg) ** 2, 0);
+  }
+
+  let improved = true;
+  while (improved) {
+    improved = false;
+    let bestVar = cppVariance(sizes);
+    for (let i = 0; i < n; i++) {
+      for (let j = 0; j < n; j++) {
+        if (i === j) continue;
+        if (sizes[i] <= minSize) continue;
+        if (maxSize > 0 && sizes[j] >= maxSize) continue;
+        sizes[i]--;
+        sizes[j]++;
+        const v = cppVariance(sizes);
+        if (v < bestVar - 1e-9) {
+          bestVar  = v;
+          improved = true;
+        } else {
+          sizes[i]++;
+          sizes[j]--;
+        }
+      }
+    }
+  }
+
+  return sizes;
 }
 
 /**
@@ -1043,15 +1152,34 @@ function removePersonFromGroup(personId) {
   renderGroups();
 }
 
-/** Distribuye las personas de forma uniforme en los grupos ya existentes */
+/** Distribuye las personas en los grupos existentes usando tamaños proporcionales
+ *  al costo de la máquina asignada a cada grupo (si la hay); en caso contrario,
+ *  distribuye de forma uniforme. */
 function autoDistribute() {
   readConfig();
+  const { minGroupSize, absMaxGroupSize } = state.config;
   if (!state.groups.length) { toast('Crea al menos un grupo primero', 'error'); return; }
   if (!state.people.length) { toast('Agrega personas primero', 'error'); return; }
 
+  const total = state.people.length;
+  const ng    = state.groups.length;
+
+  // Obtener costos asignados a cada grupo (null si no tiene máquina)
+  const groupCosts = state.groups.map(g => {
+    const m = g.machineId ? state.machines.find(m => m.id === g.machineId) : null;
+    return m ? totalCost(m) : null;
+  });
+  const allAssigned = groupCosts.every(c => c !== null);
+
+  let sizes;
+  if (allAssigned) {
+    sizes = computeProportionalSizes(groupCosts, total, minGroupSize, absMaxGroupSize);
+  } else {
+    sizes = distributeEvenSizes(total, ng);
+  }
+
   state.groups.forEach(g => (g.memberIds = []));
   const shuffled = [...state.people].sort(() => Math.random() - 0.5);
-  const sizes    = distributeEvenSizes(shuffled.length, state.groups.length);
 
   let idx = 0;
   state.groups.forEach((g, i) => {
@@ -1059,7 +1187,12 @@ function autoDistribute() {
     idx += sizes[i];
   });
   renderGroups();
-  toast('Personas distribuidas automáticamente', 'success');
+  toast(
+    allAssigned
+      ? 'Personas distribuidas proporcionalmente al costo de cada máquina'
+      : 'Personas distribuidas automáticamente (asigna máquinas para distribución óptima)',
+    'success'
+  );
 }
 
 /* --- Renderizado de grupos --- */
