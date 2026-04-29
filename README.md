@@ -1,22 +1,23 @@
-# Approval Center – Easy Guide (English)
+# Generador QR desde CSV
 
-Static site explaining, in very simple terms, the unified approval flow (vacations, purchasing, scrap, etc.).
+Aplicación estática para GitHub Pages que permite:
 
-## Files
+- subir un archivo CSV con un listado
+- elegir la columna que se convertirá en QR
+- usar una segunda columna como etiqueta visible
+- personalizar el tamaño del QR y su margen
+- descargar cada QR en PNG o exportar todos juntos en ZIP
+
+## Archivos
 - `index.html`, `styles.css`, `script.js`
-- `.nojekyll` to serve without Jekyll
+- `.nojekyll` para servir el sitio sin Jekyll
 
-## Publish on GitHub Pages
+## Uso local
+Abre `index.html` en un navegador con acceso a internet para cargar las librerías del generador QR y del ZIP desde CDN.
 
-1. Ensure these files are in the `main` branch root.
-2. In GitHub: Settings → Pages.
+## Publicar en GitHub Pages
+1. Asegura que estos archivos estén en la raíz de la rama publicada.
+2. En GitHub: Settings → Pages.
 3. Source: Deploy from a branch.
-4. Branch: `main`, Folder: `/ (root)`.
-5. Save → Wait ~1–3 minutes.
-6. Site URL: `https://wamx01.github.io/wampresentation/`.
-
-## Local Preview
-Just open `index.html` in a browser.
-
-## Custom Domain (Optional)
-Add a `CNAME` file with your domain and create a DNS CNAME to `wamx01.github.io`.
+4. Selecciona la rama y carpeta raíz.
+5. Guarda y espera unos minutos.
