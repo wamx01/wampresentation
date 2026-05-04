@@ -270,6 +270,60 @@
     .people-search-bar:focus-within { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37,99,235,.1); }
     .people-list mark { background: #fde047; color: #1e293b; border-radius: 2px; padding: 0 1px; }
 
+    /* ===== People Teams Summary ===== */
+    .people-teams-summary {
+      margin-top: .75rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface2);
+      padding: .65rem;
+    }
+    .people-teams-summary h3 {
+      margin: 0 0 .45rem;
+      font-size: .95rem;
+      color: var(--text);
+    }
+    .people-teams-list {
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+      background: var(--surface);
+    }
+    .people-teams-table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: .78rem;
+    }
+    .people-teams-table th {
+      background: var(--surface2);
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      font-size: .68rem;
+      padding: .4rem .55rem;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+    }
+    .people-teams-table td {
+      padding: .36rem .55rem;
+      border-bottom: 1px solid var(--border);
+      vertical-align: top;
+      color: var(--text);
+      line-height: 1.35;
+    }
+    .people-teams-table tr:last-child td { border-bottom: none; }
+    .people-team-name-cell {
+      font-weight: 700;
+      background: var(--surface2);
+      white-space: nowrap;
+    }
+    .people-team-count-cell {
+      text-align: center;
+      color: var(--muted);
+      font-weight: 700;
+      white-space: nowrap;
+    }
+
     /* ===== Team Filter Bar ===== */
     .team-filter-bar { margin-bottom: .65rem; }
     .team-filter-bar-label {
@@ -884,7 +938,6 @@
               title="Carga la lista desde data/people.json (requiere servidor web, no funciona en file://)">
         📡 Cargar desde servidor
       </button>
-      <button class="btn btn-danger" id="btn-clear-people" style="margin-left:auto">🗑 Limpiar todo</button>
     </div>
 
     <!-- Buscador de personas / equipos -->
@@ -904,6 +957,11 @@
         <span class="ei">👤</span>
         <p>Agrega personas manualmente o pega una lista.</p>
       </div>
+    </div>
+
+    <div id="people-teams-summary" class="people-teams-summary" style="display:none">
+      <h3>📋 Listado de equipos manuales</h3>
+      <div id="people-teams-list" class="people-teams-list"></div>
     </div>
 
     <!-- Groups preview: shown after loading people -->
@@ -1019,6 +1077,8 @@
   <button class="btn btn-secondary"      id="btn-sb-load">📥 Cargar nube</button>
   <span style="width:1px;height:1.5rem;background:var(--border);margin:0 .2rem;flex-shrink:0"></span>
   <button class="btn btn-secondary"      id="btn-export-csv">📊 Exportar CSV</button>
+  <button class="btn btn-secondary"      id="btn-export-teams-csv">👥 Exportar equipos CSV</button>
+  <button class="btn btn-secondary"      id="btn-export-teams-pdf">🧾 Exportar equipos PDF</button>
   <button class="btn btn-secondary"      id="btn-export-json">💾 Guardar JSON</button>
   <button class="btn btn-secondary"      id="btn-import-json">📤 Importar JSON</button>
   <input type="file" id="inp-import-json" accept=".json" style="display:none">
@@ -1029,6 +1089,8 @@
      JAVASCRIPT — TODA LA LÓGICA
      ===================================================================== -->
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
 <script>
 /* ======================================================================
    REPARTICIÓN EQUITATIVA DE MÁQUINAS — lógica completa
@@ -1630,6 +1692,15 @@ function addPerson(name, fixedGroupName) {
 }
 
 function removePerson(id) {
+  const person = state.people.find(p => p.id === id);
+  if (!person) return;
+
+  const wasAssigned = state.groups.some(g => g.memberIds.includes(id));
+  const msg = wasAssigned
+    ? `¿Eliminar a "${person.name}"? También se quitará de su grupo actual.`
+    : `¿Eliminar a "${person.name}"?`;
+  if (!confirm(msg)) return;
+
   state.people = state.people.filter(p => p.id !== id);
   // Quitar de todos los grupos
   state.groups.forEach(g => { g.memberIds = g.memberIds.filter(mid => mid !== id); });
@@ -1659,12 +1730,16 @@ function setPeopleSearch(q) {
 function renderPeople() {
   document.getElementById('people-count').textContent = state.people.length;
   const container = document.getElementById('people-list');
+  const teamsSummary = document.getElementById('people-teams-summary');
+  const teamsList = document.getElementById('people-teams-list');
   if (!state.people.length) {
     container.innerHTML = `
       <div class="empty-state" style="grid-column:1/-1">
         <span class="ei">👤</span>
         <p>Agrega personas manualmente o pega una lista.</p>
       </div>`;
+    if (teamsSummary) teamsSummary.style.display = 'none';
+    if (teamsList) teamsList.innerHTML = '';
     document.getElementById('groups-preview').style.display = 'none';
     renderTeamFilters();
     return;
@@ -1714,8 +1789,70 @@ function renderPeople() {
     }).join('');
   }
 
+  renderPeopleTeamsSummary();
   renderTeamFilters();
   renderGroupsPreview();
+}
+
+function renderPeopleTeamsSummary() {
+  const summary = document.getElementById('people-teams-summary');
+  const list    = document.getElementById('people-teams-list');
+  if (!summary || !list) return;
+
+  if (!state.people.length) {
+    summary.style.display = 'none';
+    list.innerHTML = '';
+    return;
+  }
+
+  const grouped = new Map();
+  state.people.forEach(p => {
+    const team = (p.fixedGroupName || '').trim() || 'Sin equipo';
+    if (!grouped.has(team)) grouped.set(team, []);
+    grouped.get(team).push(p.name);
+  });
+
+  const entries = Array.from(grouped.entries()).sort((a, b) => {
+    if (a[0] === 'Sin equipo') return 1;
+    if (b[0] === 'Sin equipo') return -1;
+    return a[0].localeCompare(b[0], 'es', { sensitivity: 'base' });
+  });
+
+  const rows = [];
+  entries.forEach(([team, names]) => {
+    const sortedNames = [...names].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    sortedNames.forEach((name, i) => {
+      if (i === 0) {
+        rows.push(`
+          <tr>
+            <td class="people-team-name-cell" rowspan="${sortedNames.length}">${esc(team)}</td>
+            <td class="people-team-count-cell" rowspan="${sortedNames.length}">${sortedNames.length}</td>
+            <td>${esc(name)}</td>
+          </tr>`);
+      } else {
+        rows.push(`
+          <tr>
+            <td>${esc(name)}</td>
+          </tr>`);
+      }
+    });
+  });
+
+  list.innerHTML = `
+    <table class="people-teams-table">
+      <thead>
+        <tr>
+          <th>Equipo</th>
+          <th>Cantidad</th>
+          <th>Persona</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${rows.join('')}
+      </tbody>
+    </table>`;
+
+  summary.style.display = 'block';
 }
 
 function renderTeamFilters() {
@@ -2935,6 +3072,124 @@ function exportCSV() {
   toast('CSV descargado', 'success');
 }
 
+function getTeamsGroupedEntries() {
+  const grouped = new Map();
+  state.people.forEach(p => {
+    const team = (p.fixedGroupName || '').trim() || 'Sin equipo';
+    if (!grouped.has(team)) grouped.set(team, []);
+    grouped.get(team).push(p.name);
+  });
+
+  const entries = Array.from(grouped.entries()).sort((a, b) => {
+    if (a[0] === 'Sin equipo') return 1;
+    if (b[0] === 'Sin equipo') return -1;
+    return a[0].localeCompare(b[0], 'es', { sensitivity: 'base' });
+  });
+
+  return { grouped, entries };
+}
+
+function exportTeamsCSV() {
+  if (!state.people.length) {
+    toast('No hay personas para exportar', 'error');
+    return;
+  }
+
+  const { grouped, entries } = getTeamsGroupedEntries();
+
+  const rows = [['Equipo', 'Persona']];
+  entries.forEach(([team, names]) => {
+    const sortedNames = [...names].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    sortedNames.forEach(name => rows.push([team, name]));
+  });
+
+  rows.push([]);
+  rows.push(['RESUMEN']);
+  rows.push(['Total personas', state.people.length]);
+  rows.push(['Total equipos', entries.length]);
+  const sinEquipo = grouped.get('Sin equipo') || [];
+  rows.push(['Personas sin equipo', sinEquipo.length]);
+
+  const csv = rows
+    .map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
+    .join('\n');
+
+  const ts = new Date().toISOString().slice(0,10);
+  downloadFile(`equipos_personas_${ts}.csv`, '\uFEFF' + csv, 'text/csv;charset=utf-8');
+  toast('CSV de equipos descargado', 'success');
+}
+
+function exportTeamsPDF() {
+  if (!state.people.length) {
+    toast('No hay personas para exportar', 'error');
+    return;
+  }
+
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    toast('No se pudo cargar la librería para PDF', 'error');
+    return;
+  }
+
+  const { grouped, entries } = getTeamsGroupedEntries();
+  const jsPDF = window.jspdf.jsPDF;
+  const doc = new jsPDF({ orientation: 'p', unit: 'pt', format: 'a4' });
+  const ts = new Date();
+  const fdate = ts.toLocaleString('es-MX');
+
+  doc.setFontSize(14);
+  doc.text('Listado de equipos y personas', 40, 42);
+  doc.setFontSize(9);
+  doc.setTextColor(90);
+  doc.text(`Generado: ${fdate}`, 40, 58);
+
+  const body = [];
+  entries.forEach(([team, names]) => {
+    const sortedNames = [...names].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    sortedNames.forEach(name => body.push([team, String(sortedNames.length), name]));
+  });
+
+  if (typeof doc.autoTable === 'function') {
+    doc.autoTable({
+      startY: 72,
+      head: [['Equipo', 'Cantidad', 'Persona']],
+      body,
+      theme: 'grid',
+      styles: { fontSize: 9, cellPadding: 4, lineColor: [220, 220, 220], lineWidth: 0.5 },
+      headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81] },
+      columnStyles: {
+        0: { cellWidth: 170 },
+        1: { cellWidth: 70, halign: 'center' },
+        2: { cellWidth: 280 }
+      }
+    });
+
+    const y = doc.lastAutoTable.finalY + 20;
+    const sinEquipo = (grouped.get('Sin equipo') || []).length;
+    doc.setFontSize(10);
+    doc.setTextColor(33);
+    doc.text(`Total personas: ${state.people.length}`, 40, y);
+    doc.text(`Total equipos: ${entries.length}`, 40, y + 14);
+    doc.text(`Personas sin equipo: ${sinEquipo}`, 40, y + 28);
+  } else {
+    doc.setFontSize(10);
+    let y = 80;
+    entries.forEach(([team, names]) => {
+      const sortedNames = [...names].sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+      doc.text(`${team} (${sortedNames.length})`, 40, y);
+      y += 14;
+      sortedNames.forEach(name => {
+        doc.text(`- ${name}`, 56, y);
+        y += 12;
+      });
+      y += 8;
+    });
+  }
+
+  const fname = `equipos_personas_${ts.toISOString().slice(0,10)}.pdf`;
+  doc.save(fname);
+  toast('PDF de equipos descargado', 'success');
+}
+
 function exportJSON() {
   const snapshot = getSerializableSnapshot();
   const data = {
@@ -3206,24 +3461,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   /* --- Personas: cargar desde servidor --- */
   document.getElementById('btn-load-server').addEventListener('click', loadFromServer);
 
-  /* --- Personas: limpiar todo --- */
-  document.getElementById('btn-clear-people').addEventListener('click', () => {
-    if (!confirm('¿Eliminar todas las personas? Se limpiarán los grupos también.')) return;
-    state.people     = [];
-    state.unassigned = [];
-    _teamFilter      = '__all__';
-    _peopleSearch    = '';
-    const si = document.getElementById('inp-people-search');
-    if (si) si.value = '';
-    const sc = document.getElementById('btn-people-search-clear');
-    if (sc) sc.style.display = 'none';
-    state.groups.forEach(g => (g.memberIds = []));
-    renderPeople();
-    renderGroups();
-    updateBadges();
-    scheduleSupabaseAutoSave();
-  });
-
   /* --- Máquinas: agregar --- */
   const inpMachineName = document.getElementById('inp-machine-name');
   document.getElementById('btn-add-machine').addEventListener('click', () => {
@@ -3254,6 +3491,8 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Exportar --- */
   document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
+  document.getElementById('btn-export-teams-csv').addEventListener('click', exportTeamsCSV);
+  document.getElementById('btn-export-teams-pdf').addEventListener('click', exportTeamsPDF);
   document.getElementById('btn-export-json').addEventListener('click', exportJSON);
 
   /* --- Importar JSON --- */
@@ -3286,6 +3525,12 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadSnapshotFromSupabase();
   });
   document.getElementById('btn-sb-delete').addEventListener('click', () => {
+    const pwd = prompt('Escribe la contraseña para borrar el snapshot de la nube:');
+    if (pwd === null) return; // canceló
+    if (pwd !== SUPABASE_CONFIG_PASSWORD) {
+      toast('Contraseña incorrecta', 'error');
+      return;
+    }
     deleteSnapshotFromSupabase();
   });
 
