@@ -568,6 +568,122 @@
       padding: .1rem .45rem;
       font-size: .75rem;
     }
+
+    /* ===== Supabase persistence ===== */
+    .supabase-panel {
+      margin-top: 1rem;
+      padding-top: 1rem;
+      border-top: 1px solid var(--border);
+    }
+    .supabase-panel-head {
+      display: flex;
+      justify-content: space-between;
+      gap: .75rem;
+      align-items: baseline;
+      flex-wrap: wrap;
+      margin-bottom: .75rem;
+    }
+    .supabase-panel-head h3 {
+      font-size: .85rem;
+      font-weight: 700;
+      color: var(--text);
+    }
+    .supabase-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: .75rem;
+    }
+    .supabase-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: .5rem;
+      margin-top: .75rem;
+    }
+    .supabase-meta {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 1rem;
+      margin-top: .75rem;
+      align-items: center;
+    }
+    .supabase-status {
+      font-size: .78rem;
+      font-weight: 600;
+      color: var(--muted);
+    }
+    .supabase-lock-actions {
+      display: flex;
+      gap: .45rem;
+      align-items: center;
+    }
+    .btn-sb-toggle {
+      width: 34px;
+      height: 34px;
+      padding: 0;
+      border-radius: 50%;
+      font-size: 1.05rem;
+      line-height: 1;
+      justify-content: center;
+    }
+    .supabase-hidden-note {
+      margin-top: .65rem;
+      padding: .55rem .75rem;
+      font-size: .76rem;
+      color: var(--muted);
+      background: var(--surface2);
+      border: 1px dashed var(--border);
+      border-radius: 8px;
+    }
+    .supabase-protected {
+      display: none;
+    }
+    .supabase-panel.unlocked .supabase-protected {
+      display: block;
+    }
+    .supabase-panel.unlocked .supabase-hidden-note {
+      display: none;
+    }
+    .supabase-log {
+      margin-top: .75rem;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: .65rem .8rem;
+    }
+    .supabase-log h4 {
+      font-size: .72rem;
+      font-weight: 700;
+      color: var(--muted);
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      margin-bottom: .45rem;
+    }
+    .supabase-log-list {
+      list-style: none;
+      display: flex;
+      flex-direction: column;
+      gap: .35rem;
+      max-height: 160px;
+      overflow-y: auto;
+    }
+    .supabase-log-list li {
+      font-size: .76rem;
+      color: var(--text);
+      display: flex;
+      justify-content: space-between;
+      gap: .75rem;
+      padding-bottom: .35rem;
+      border-bottom: 1px solid var(--border);
+    }
+    .supabase-log-list li:last-child {
+      border-bottom: none;
+      padding-bottom: 0;
+    }
+    .supabase-log-list .time {
+      color: var(--muted);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
   </style>
 </head>
 <body>
@@ -633,6 +749,69 @@
         <input type="number" id="cfg-transportRate" value="10" min="0" max="100" placeholder="%" style="margin-top:.3rem">
       </div>
 
+    </div>
+
+    <div class="supabase-panel" id="sb-panel">
+      <div class="supabase-panel-head">
+        <h3>☁️ Persistencia con Supabase</h3>
+        <div class="supabase-lock-actions">
+          <button class="btn btn-secondary btn-sm btn-sb-toggle" id="btn-sb-toggle" title="Mostrar configuración de Supabase" aria-label="Mostrar configuración de Supabase">⚙️</button>
+        </div>
+      </div>
+
+      <div class="supabase-hidden-note">
+        Configuración de Supabase oculta. Presiona el boton <strong>⚙️</strong> e ingresa contraseña para verla.
+      </div>
+
+      <div class="supabase-protected" id="sb-protected">
+        <span class="text-muted" style="font-size:.78rem">Guarda y recupera el estado completo desde la nube</span>
+
+        <div class="supabase-grid" style="margin-top:.75rem">
+        <div class="form-group">
+          <label>Supabase URL</label>
+          <input type="text" id="sb-url" placeholder="https://tu-proyecto.supabase.co">
+        </div>
+
+        <div class="form-group">
+          <label>Anon key pública</label>
+          <input type="password" id="sb-anon-key" placeholder="eyJhbGciOi...">
+        </div>
+
+        <div class="form-group">
+          <label>Nombre del proyecto</label>
+          <input type="text" id="sb-project-key" placeholder="reparto-planta-a">
+        </div>
+      </div>
+
+      <div class="supabase-meta">
+        <label class="cfg-checkbox">
+          <input type="checkbox" id="sb-auto-save">
+          <span style="font-size:.78rem">Autoguardar cambios</span>
+        </label>
+        <label class="cfg-checkbox">
+          <input type="checkbox" id="sb-auto-load" checked>
+          <span style="font-size:.78rem">Intentar cargar al abrir</span>
+        </label>
+      </div>
+
+      <div class="supabase-actions">
+        <button class="btn btn-secondary" id="btn-sb-connect">🔌 Validar conexión</button>
+        <button class="btn btn-secondary" id="btn-sb-save">☁️ Guardar nube</button>
+        <button class="btn btn-secondary" id="btn-sb-load">📥 Cargar nube</button>
+        <button class="btn btn-danger" id="btn-sb-delete">🗑 Borrar nube</button>
+      </div>
+
+      <p class="mt-05 text-muted" style="font-size:.76rem">
+        Se guarda un snapshot completo: personas, máquinas, grupos, configuración y el último reparto calculado.
+      </p>
+      <div id="sb-status" class="supabase-status">Sin configurar</div>
+      <div class="supabase-log">
+        <h4>Actividad Supabase</h4>
+        <ul id="sb-log" class="supabase-log-list">
+          <li><span>Sin actividad todavía</span><span class="time">--:--</span></li>
+        </ul>
+      </div>
+      </div>
     </div>
   </div><!-- /config -->
 
@@ -819,6 +998,7 @@
 <!-- =====================================================================
      JAVASCRIPT — TODA LA LÓGICA
      ===================================================================== -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ======================================================================
    REPARTICIÓN EQUITATIVA DE MÁQUINAS — lógica completa
@@ -916,6 +1096,185 @@ function downloadFile(name, content, mime) {
   URL.revokeObjectURL(url);
 }
 
+const SUPABASE_SETTINGS_KEY = 'machine-distribution-supabase-settings';
+const SUPABASE_SNAPSHOT_TABLE = 'machine_distribution_snapshots';
+const SUPABASE_PANEL_UNLOCK_KEY = 'supabase-panel-unlocked';
+// Nota: esto solo oculta la UI; no es seguridad real porque vive en cliente.
+const SUPABASE_CONFIG_PASSWORD = 'Arzmec_2026';
+const DEFAULT_SUPABASE_SETTINGS = {
+  url: 'https://hfzhrblxilubfgkxppgd.supabase.co',
+  anonKey: 'sb_publishable_bgmp0VTRZDiBOY-7hea2kA_4UZb0N6w',
+  projectKey: 'hfzhrblxilubfgkxppgd',
+  autoSave: false,
+  autoLoad: true
+};
+
+const supabaseStore = {
+  client: null,
+  url: '',
+  anonKey: '',
+  saveTimer: null,
+  suppressAutoSave: 0,
+  logEntries: []
+};
+
+function cloudStatus(msg, type = 'info') {
+  const el = document.getElementById('sb-status');
+  if (!el) return;
+  el.textContent = msg;
+  el.style.color =
+    type === 'error'   ? 'var(--danger)'  :
+    type === 'success' ? 'var(--success)' :
+    type === 'warning' ? 'var(--warning)' : 'var(--muted)';
+}
+
+function appendSupabaseLog(message, type = 'info') {
+  const colors = {
+    error: 'var(--danger)',
+    success: 'var(--success)',
+    warning: 'var(--warning)',
+    info: 'var(--text)'
+  };
+  supabaseStore.logEntries.unshift({
+    message,
+    type,
+    time: new Date().toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
+  });
+  supabaseStore.logEntries = supabaseStore.logEntries.slice(0, 8);
+
+  const list = document.getElementById('sb-log');
+  if (!list) return;
+  list.innerHTML = supabaseStore.logEntries.map(entry => `
+    <li>
+      <span style="color:${colors[entry.type] || 'var(--text)'}">${esc(entry.message)}</span>
+      <span class="time">${entry.time}</span>
+    </li>`).join('');
+}
+
+function normalizeProjectKey(value) {
+  return String(value || '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-')
+    .replace(/[^a-z0-9_-]/g, '-')
+    .replace(/-+/g, '-')
+    .replace(/^-|-$/g, '');
+}
+
+function readSupabaseSettings() {
+  return {
+    url: (document.getElementById('sb-url')?.value || '').trim(),
+    anonKey: (document.getElementById('sb-anon-key')?.value || '').trim(),
+    projectKey: normalizeProjectKey(document.getElementById('sb-project-key')?.value || ''),
+    autoSave: !!document.getElementById('sb-auto-save')?.checked,
+    autoLoad: !!document.getElementById('sb-auto-load')?.checked
+  };
+}
+
+function hasSupabaseConfig(settings = readSupabaseSettings()) {
+  return !!(settings.url && settings.anonKey && settings.projectKey);
+}
+
+function persistSupabaseSettings() {
+  try {
+    localStorage.setItem(SUPABASE_SETTINGS_KEY, JSON.stringify(readSupabaseSettings()));
+  } catch (_) {
+    // Ignorar si el navegador bloquea storage
+  }
+}
+
+function restoreSupabaseSettings() {
+  document.getElementById('sb-url').value = DEFAULT_SUPABASE_SETTINGS.url;
+  document.getElementById('sb-anon-key').value = DEFAULT_SUPABASE_SETTINGS.anonKey;
+  document.getElementById('sb-project-key').value = DEFAULT_SUPABASE_SETTINGS.projectKey;
+  document.getElementById('sb-auto-save').checked = DEFAULT_SUPABASE_SETTINGS.autoSave;
+  document.getElementById('sb-auto-load').checked = DEFAULT_SUPABASE_SETTINGS.autoLoad;
+
+  try {
+    const raw = localStorage.getItem(SUPABASE_SETTINGS_KEY);
+    if (!raw) {
+      cloudStatus(`Configuración por defecto cargada para "${DEFAULT_SUPABASE_SETTINGS.projectKey}"`);
+      appendSupabaseLog('Credenciales Supabase por defecto cargadas en la página', 'info');
+      return;
+    }
+    const saved = JSON.parse(raw);
+    if (saved.url)        document.getElementById('sb-url').value = saved.url;
+    if (saved.anonKey)    document.getElementById('sb-anon-key').value = saved.anonKey;
+    if (saved.projectKey) document.getElementById('sb-project-key').value = saved.projectKey;
+    document.getElementById('sb-auto-save').checked = !!saved.autoSave;
+    document.getElementById('sb-auto-load').checked = saved.autoLoad !== false;
+    cloudStatus(hasSupabaseConfig(saved)
+      ? `Configuración cargada para "${saved.projectKey}"`
+      : 'Completa la URL, anon key y nombre del proyecto');
+    appendSupabaseLog('Configuración de Supabase restaurada desde el navegador', 'info');
+  } catch (_) {
+    cloudStatus('No se pudo restaurar la configuración guardada', 'warning');
+    appendSupabaseLog('No se pudo restaurar la configuración local de Supabase', 'warning');
+  }
+}
+
+function setSupabasePanelUnlocked(unlocked, options = {}) {
+  const { silent = false } = options;
+  const panel = document.getElementById('sb-panel');
+  if (!panel) return;
+
+  panel.classList.toggle('unlocked', unlocked);
+  refreshSupabaseToggleButton();
+
+  if (unlocked) {
+    sessionStorage.setItem(SUPABASE_PANEL_UNLOCK_KEY, '1');
+    if (!silent) {
+      appendSupabaseLog('Configuracion de Supabase visible', 'info');
+      toast('Configuracion de Supabase desbloqueada', 'success');
+    }
+  } else {
+    sessionStorage.removeItem(SUPABASE_PANEL_UNLOCK_KEY);
+    if (!silent) {
+      appendSupabaseLog('Configuracion de Supabase oculta', 'info');
+      toast('Configuracion de Supabase ocultada', 'info');
+    }
+  }
+}
+
+function refreshSupabaseToggleButton() {
+  const panel = document.getElementById('sb-panel');
+  const btn = document.getElementById('btn-sb-toggle');
+  if (!panel || !btn) return;
+  const unlocked = panel.classList.contains('unlocked');
+  btn.title = unlocked ? 'Ocultar configuración de Supabase' : 'Mostrar configuración de Supabase';
+  btn.setAttribute('aria-label', btn.title);
+}
+
+function unlockSupabasePanel() {
+  const pwd = prompt('Ingresa la contrasena para mostrar la configuracion de Supabase:');
+  if (pwd == null) return;
+  if (pwd === SUPABASE_CONFIG_PASSWORD) {
+    setSupabasePanelUnlocked(true);
+    return;
+  }
+  appendSupabaseLog('Intento fallido de desbloqueo', 'warning');
+  toast('Contrasena incorrecta', 'error');
+}
+
+function toggleSupabasePanel() {
+  const panel = document.getElementById('sb-panel');
+  if (!panel) return;
+  if (panel.classList.contains('unlocked')) {
+    setSupabasePanelUnlocked(false);
+  } else {
+    unlockSupabasePanel();
+  }
+}
+
+function withAutoSaveSuspended(fn) {
+  supabaseStore.suppressAutoSave++;
+  try {
+    return fn();
+  } finally {
+    supabaseStore.suppressAutoSave = Math.max(0, supabaseStore.suppressAutoSave - 1);
+  }
+}
+
 /* ------------------------------------------------------------------ */
 /*  Estado central de la aplicación                                    */
 /* ------------------------------------------------------------------ */
@@ -955,6 +1314,261 @@ function readConfig() {
   state.mode                    = document.getElementById('cfg-mode').value;
 }
 
+function syncConfigToDom() {
+  document.getElementById('cfg-mode').value = state.mode;
+  document.getElementById('cfg-numGroups').value = state.config.numGroups;
+  document.getElementById('cfg-minSize').value = state.config.minGroupSize;
+  document.getElementById('cfg-maxSize').value = state.config.maxGroupSize;
+  document.getElementById('cfg-absMax').value = state.config.absMaxGroupSize;
+  document.getElementById('cfg-tolerance').value = state.config.tolerancePercent;
+  document.getElementById('cfg-autoTransport').checked = state.config.autoTransport;
+  document.getElementById('cfg-transportRate').value = state.config.transportRate;
+  document.getElementById('grupos-auto-panel').style.display = state.mode === 'auto' ? '' : 'none';
+  document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
+}
+
+function getSerializableSnapshot() {
+  readConfig();
+  return {
+    version: 3,
+    savedAt: new Date().toISOString(),
+    mode: state.mode,
+    config: { ...state.config },
+    people: state.people.map(p => ({
+      id: p.id,
+      name: p.name,
+      fixedGroupName: p.fixedGroupName || null
+    })),
+    machines: state.machines.map(m => ({
+      id: m.id,
+      name: m.name,
+      baseCost: m.baseCost,
+      transportCost: m.transportCost
+    })),
+    groups: state.groups.map(g => ({
+      id: g.id,
+      name: g.name,
+      memberIds: [...g.memberIds],
+      machineId: g.machineId || null
+    })),
+    unassignedIds: (state.unassigned || []).map(p => p.id)
+  };
+}
+
+function applySnapshot(snapshot, options = {}) {
+  const { silent = false } = options;
+  if (!snapshot || typeof snapshot !== 'object') throw new Error('Snapshot inválido');
+
+  withAutoSaveSuspended(() => {
+    const safeConfig = snapshot.config || {};
+
+    state.mode = snapshot.mode === 'manual' ? 'manual' : 'auto';
+    state.config = {
+      numGroups: Math.max(0, parseInt(safeConfig.numGroups) || 0),
+      minGroupSize: Math.max(1, parseInt(safeConfig.minGroupSize) || 3),
+      maxGroupSize: Math.max(1, parseInt(safeConfig.maxGroupSize) || 5),
+      absMaxGroupSize: Math.max(1, parseInt(safeConfig.absMaxGroupSize) || 7),
+      tolerancePercent: Math.max(0, parseFloat(safeConfig.tolerancePercent) || 20),
+      autoTransport: !!safeConfig.autoTransport,
+      transportRate: Math.max(0, parseFloat(safeConfig.transportRate) || 0)
+    };
+
+    state.people = Array.isArray(snapshot.people)
+      ? snapshot.people
+          .map(p => ({
+            id: parseInt(p.id) || uid(),
+            name: String(p.name || '').trim(),
+            fixedGroupName: normalizeTeamName(p.fixedGroupName)
+          }))
+          .filter(p => p.name)
+      : [];
+
+    state.machines = Array.isArray(snapshot.machines)
+      ? snapshot.machines
+          .map(m => ({
+            id: parseInt(m.id) || uid(),
+            name: String(m.name || '').trim(),
+            baseCost: parseFloat(m.baseCost) || 0,
+            transportCost: parseFloat(m.transportCost) || 0
+          }))
+          .filter(m => m.name)
+      : [];
+
+    const validPersonIds = new Set(state.people.map(p => p.id));
+    const validMachineIds = new Set(state.machines.map(m => m.id));
+    state.groups = Array.isArray(snapshot.groups)
+      ? snapshot.groups.map(g => ({
+          id: parseInt(g.id) || uid(),
+          name: String(g.name || '').trim() || `Grupo ${uid()}`,
+          memberIds: Array.isArray(g.memberIds) ? g.memberIds.filter(id => validPersonIds.has(id)) : [],
+          machineId: validMachineIds.has(g.machineId) ? g.machineId : null
+        }))
+      : [];
+
+    const unassignedIds = new Set(Array.isArray(snapshot.unassignedIds) ? snapshot.unassignedIds : []);
+    state.unassigned = state.people.filter(p => unassignedIds.has(p.id));
+    state.results = null;
+    _teamFilter = '__all__';
+
+    const maxId = Math.max(
+      0,
+      ...state.people.map(p => p.id),
+      ...state.machines.map(m => m.id),
+      ...state.groups.map(g => g.id)
+    );
+    _uid = maxId + 1;
+
+    syncConfigToDom();
+    renderPeople();
+    renderMachines();
+    renderGroups();
+
+    const results = calculateResults();
+    renderResults(results);
+    updateBadges();
+  });
+
+  if (!silent) {
+    toast('Snapshot restaurado correctamente', 'success');
+  }
+}
+
+function scheduleSupabaseAutoSave() {
+  const settings = readSupabaseSettings();
+  if (!settings.autoSave || !hasSupabaseConfig(settings) || supabaseStore.suppressAutoSave > 0) return;
+  clearTimeout(supabaseStore.saveTimer);
+  supabaseStore.saveTimer = setTimeout(() => {
+    appendSupabaseLog(`Autoguardado programado para "${settings.projectKey}"`, 'info');
+    saveSnapshotToSupabase({ silent: true });
+  }, 900);
+}
+
+function ensureSupabaseClient(options = {}) {
+  const { silent = false } = options;
+  const settings = readSupabaseSettings();
+  if (!hasSupabaseConfig(settings)) {
+    const msg = 'Completa la URL, anon key y nombre del proyecto';
+    cloudStatus(msg, 'warning');
+    appendSupabaseLog(msg, 'warning');
+    if (!silent) toast(msg, 'warning');
+    return null;
+  }
+  if (!window.supabase || typeof window.supabase.createClient !== 'function') {
+    const msg = 'La librería de Supabase no cargó correctamente';
+    cloudStatus(msg, 'error');
+    appendSupabaseLog(msg, 'error');
+    if (!silent) toast(msg, 'error');
+    return null;
+  }
+  if (supabaseStore.client && supabaseStore.url === settings.url && supabaseStore.anonKey === settings.anonKey) {
+    return supabaseStore.client;
+  }
+
+  supabaseStore.client = window.supabase.createClient(settings.url, settings.anonKey, {
+    auth: {
+      persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false
+    }
+  });
+  supabaseStore.url = settings.url;
+  supabaseStore.anonKey = settings.anonKey;
+  persistSupabaseSettings();
+  cloudStatus(`Conectado a Supabase para "${settings.projectKey}"`, 'success');
+  appendSupabaseLog(`Cliente Supabase listo para "${settings.projectKey}"`, 'success');
+  return supabaseStore.client;
+}
+
+async function saveSnapshotToSupabase(options = {}) {
+  const { silent = false } = options;
+  const client = ensureSupabaseClient({ silent });
+  if (!client) return false;
+
+  const settings = readSupabaseSettings();
+  const payload = {
+    project_key: settings.projectKey,
+    title: settings.projectKey,
+    payload: getSerializableSnapshot(),
+    updated_at: new Date().toISOString()
+  };
+
+  const { error } = await client
+    .from(SUPABASE_SNAPSHOT_TABLE)
+    .upsert(payload, { onConflict: 'project_key' });
+
+  if (error) {
+    cloudStatus(`Error al guardar: ${error.message}`, 'error');
+    appendSupabaseLog(`Error al guardar snapshot: ${error.message}`, 'error');
+    if (!silent) toast(`Error al guardar en Supabase: ${error.message}`, 'error');
+    return false;
+  }
+
+  const msg = `Guardado en la nube: ${settings.projectKey}`;
+  cloudStatus(msg, 'success');
+  appendSupabaseLog(`Snapshot guardado en Supabase para "${settings.projectKey}"`, 'success');
+  if (!silent) toast(msg, 'success');
+  return true;
+}
+
+async function loadSnapshotFromSupabase(options = {}) {
+  const { silent = false } = options;
+  const client = ensureSupabaseClient({ silent });
+  if (!client) return false;
+
+  const settings = readSupabaseSettings();
+  const { data, error } = await client
+    .from(SUPABASE_SNAPSHOT_TABLE)
+    .select('payload, updated_at')
+    .eq('project_key', settings.projectKey)
+    .maybeSingle();
+
+  if (error) {
+    cloudStatus(`Error al cargar: ${error.message}`, 'error');
+    appendSupabaseLog(`Error al cargar snapshot: ${error.message}`, 'error');
+    if (!silent) toast(`Error al cargar desde Supabase: ${error.message}`, 'error');
+    return false;
+  }
+  if (!data || !data.payload) {
+    const msg = `No hay datos guardados para "${settings.projectKey}"`;
+    cloudStatus(msg, 'warning');
+    appendSupabaseLog(msg, 'warning');
+    if (!silent) toast(msg, 'warning');
+    return false;
+  }
+
+  applySnapshot(data.payload, { silent: true });
+  const msg = `Datos cargados desde la nube${data.updated_at ? ` (${new Date(data.updated_at).toLocaleString('es-MX')})` : ''}`;
+  cloudStatus(msg, 'success');
+  appendSupabaseLog(`Snapshot cargado desde Supabase para "${settings.projectKey}"`, 'success');
+  if (!silent) toast(msg, 'success');
+  return true;
+}
+
+async function deleteSnapshotFromSupabase() {
+  const client = ensureSupabaseClient();
+  if (!client) return false;
+  const settings = readSupabaseSettings();
+
+  if (!confirm(`¿Borrar el snapshot guardado para "${settings.projectKey}"?`)) return false;
+
+  const { error } = await client
+    .from(SUPABASE_SNAPSHOT_TABLE)
+    .delete()
+    .eq('project_key', settings.projectKey);
+
+  if (error) {
+    cloudStatus(`Error al borrar: ${error.message}`, 'error');
+    appendSupabaseLog(`Error al borrar snapshot: ${error.message}`, 'error');
+    toast(`Error al borrar en Supabase: ${error.message}`, 'error');
+    return false;
+  }
+
+  cloudStatus(`Snapshot eliminado para "${settings.projectKey}"`, 'success');
+  appendSupabaseLog(`Snapshot eliminado de Supabase para "${settings.projectKey}"`, 'success');
+  toast('Snapshot eliminado de Supabase', 'success');
+  return true;
+}
+
 /* ------------------------------------------------------------------ */
 /*  Costo total de una máquina (base + transporte)                     */
 /* ------------------------------------------------------------------ */
@@ -980,6 +1594,7 @@ function addPerson(name, fixedGroupName) {
   state.people.push({ id: uid(), name, fixedGroupName: normalizeTeamName(fixedGroupName) });
   renderPeople();
   updateBadges();
+  scheduleSupabaseAutoSave();
   return true;
 }
 
@@ -990,6 +1605,7 @@ function removePerson(id) {
   renderPeople();
   renderGroups();
   updateBadges();
+  scheduleSupabaseAutoSave();
 }
 
 function setPersonTeam(id, teamName) {
@@ -998,6 +1614,7 @@ function setPersonTeam(id, teamName) {
     p.fixedGroupName = normalizeTeamName(teamName);
     renderTeamFilters();
     renderGroupsPreview();
+    scheduleSupabaseAutoSave();
   }
 }
 
@@ -1109,6 +1726,7 @@ function addMachine(name, baseCost, transportCost) {
   });
   renderMachines();
   updateBadges();
+  scheduleSupabaseAutoSave();
   return true;
 }
 
@@ -1117,6 +1735,7 @@ function removeMachine(id) {
   state.groups.forEach(g => { if (g.machineId === id) g.machineId = null; });
   renderMachines();
   updateBadges();
+  scheduleSupabaseAutoSave();
 }
 
 function editMachineField(id, field, rawValue) {
@@ -1128,6 +1747,7 @@ function editMachineField(id, field, rawValue) {
     m[field] = parseFloat(rawValue) || 0;
   }
   renderMachines();
+  scheduleSupabaseAutoSave();
 }
 
 function renderMachines() {
@@ -1321,6 +1941,7 @@ function autoCreateGroups() {
     }
   }
 
+  scheduleSupabaseAutoSave();
   return true;
 }
 
@@ -1615,17 +2236,22 @@ function addGroup() {
   });
   renderGroups();
   updateBadges();
+  scheduleSupabaseAutoSave();
 }
 
 function removeGroup(id) {
   state.groups = state.groups.filter(g => g.id !== id);
   renderGroups();
   updateBadges();
+  scheduleSupabaseAutoSave();
 }
 
 function renameGroup(id, name) {
   const g = state.groups.find(g => g.id === id);
-  if (g && name.trim()) g.name = name.trim();
+  if (g && name.trim()) {
+    g.name = name.trim();
+    scheduleSupabaseAutoSave();
+  }
 }
 
 function assignMachineManual(groupId, machineId) {
@@ -1633,11 +2259,13 @@ function assignMachineManual(groupId, machineId) {
   state.groups.forEach(g => { if (g.machineId === machineId) g.machineId = null; });
   const g = state.groups.find(g => g.id === groupId);
   if (g) g.machineId = machineId || null;
+  scheduleSupabaseAutoSave();
 }
 
 function removePersonFromGroup(personId) {
   state.groups.forEach(g => { g.memberIds = g.memberIds.filter(id => id !== personId); });
   renderGroups();
+  scheduleSupabaseAutoSave();
 }
 
 /** Distribuye las personas en los grupos existentes usando tamaños proporcionales
@@ -1732,6 +2360,7 @@ function autoDistribute() {
       : 'Personas distribuidas automáticamente (asigna máquinas para distribución óptima)',
     'success'
   );
+  scheduleSupabaseAutoSave();
 }
 
 /* --- Renderizado de grupos --- */
@@ -1886,6 +2515,7 @@ function onDrop(ev, target) {
 
   renderGroups();
   _dragId = null;
+  scheduleSupabaseAutoSave();
 }
 
 /* ------------------------------------------------------------------ */
@@ -2100,6 +2730,7 @@ async function loadFromServer() {
       if (addPerson(p.name, teamName)) added++;
     });
     toast(`✅ ${added} persona(s) cargadas desde el servidor`, 'success');
+    scheduleSupabaseAutoSave();
   } catch (e) {
     toast(`Error al cargar: ${e.message}`, 'error');
   }
@@ -2207,6 +2838,7 @@ function optimize() {
       results.isBalanced ? 'success' : 'warning'
     );
   }
+  scheduleSupabaseAutoSave();
 }
 
 /* ------------------------------------------------------------------ */
@@ -2252,9 +2884,11 @@ function exportCSV() {
 }
 
 function exportJSON() {
+  const snapshot = getSerializableSnapshot();
   const data = {
-    version: 2,
-    fecha: new Date().toISOString(),
+    version: 3,
+    fecha: snapshot.savedAt,
+    snapshot,
     configuracion: {
       modo: state.mode,
       numGrupos: state.config.numGroups,
@@ -2286,6 +2920,11 @@ function importConfigJSON(file) {
   reader.onload = e => {
     try {
       const data = JSON.parse(e.target.result);
+      if (data.snapshot) {
+        applySnapshot(data.snapshot);
+        scheduleSupabaseAutoSave();
+        return;
+      }
       if (!Array.isArray(data.personas) && !Array.isArray(data.maquinas)) {
         toast('Archivo JSON inválido: no contiene personas ni máquinas', 'error');
         return;
@@ -2341,6 +2980,7 @@ function importConfigJSON(file) {
       renderResults(null);
       updateBadges();
       toast(`✅ Importado: ${state.people.length} persona(s) · ${state.machines.length} máquina(s)`, 'success');
+      scheduleSupabaseAutoSave();
     } catch (err) {
       toast(`Error al importar: ${err.message}`, 'error');
     }
@@ -2371,7 +3011,8 @@ function updateBadges() {
 /*  DATOS DE EJEMPLO                                                   */
 /* ------------------------------------------------------------------ */
 
-function loadSampleData() {
+function loadSampleData(options = {}) {
+  const { silent = false, skipAutoSave = false } = options;
   /* 52 personas — 8 con equipo establecido, 3 en micro-grupos, 41 libres */
   const people = [
     { name: 'Ana García',           fixedGroupName: 'Equipo Alpha' },
@@ -2426,14 +3067,17 @@ function loadSampleData() {
   renderGroups();
   renderResults(null);
   updateBadges();
-  toast('✅ Datos de ejemplo: 52 personas (8 establecidos · 3 micro-grupos · 41 libres) · 8 máquinas', 'success');
+  if (!skipAutoSave) scheduleSupabaseAutoSave();
+  if (!silent) {
+    toast('✅ Datos de ejemplo: 52 personas (8 establecidos · 3 micro-grupos · 41 libres) · 8 máquinas', 'success');
+  }
 }
 
 /* ------------------------------------------------------------------ */
 /*  INICIALIZACIÓN                                                     */
 /* ------------------------------------------------------------------ */
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Tabs --- */
   document.querySelectorAll('.tab-btn').forEach(btn => {
@@ -2446,16 +3090,27 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('grupos-auto-panel').style.display   = state.mode === 'auto'   ? '' : 'none';
     document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
     renderGroups();
+    scheduleSupabaseAutoSave();
   });
 
   /* --- Config: transporte automático --- */
   document.getElementById('cfg-autoTransport').addEventListener('change', () => {
     readConfig();
     renderMachines();
+    scheduleSupabaseAutoSave();
   });
   document.getElementById('cfg-transportRate').addEventListener('change', () => {
     readConfig();
     renderMachines();
+    scheduleSupabaseAutoSave();
+  });
+
+  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      readConfig();
+      renderGroupsPreview();
+      scheduleSupabaseAutoSave();
+    });
   });
 
   /* --- Personas: agregar uno a uno --- */
@@ -2509,6 +3164,7 @@ document.addEventListener('DOMContentLoaded', () => {
     renderPeople();
     renderGroups();
     updateBadges();
+    scheduleSupabaseAutoSave();
   });
 
   /* --- Máquinas: agregar --- */
@@ -2552,8 +3208,38 @@ document.addEventListener('DOMContentLoaded', () => {
     e.target.value = ''; // reset so same file can be re-imported
   });
 
-  /* --- Cargar datos de ejemplo al iniciar --- */
-  loadSampleData();
+  /* --- Supabase --- */
+  restoreSupabaseSettings();
+  setSupabasePanelUnlocked(sessionStorage.getItem(SUPABASE_PANEL_UNLOCK_KEY) === '1', { silent: true });
+  refreshSupabaseToggleButton();
+  document.getElementById('btn-sb-toggle').addEventListener('click', toggleSupabasePanel);
+  ['sb-url', 'sb-anon-key', 'sb-project-key', 'sb-auto-save', 'sb-auto-load'].forEach(id => {
+    document.getElementById(id).addEventListener('change', () => {
+      persistSupabaseSettings();
+      appendSupabaseLog('Configuración de Supabase actualizada', 'info');
+    });
+  });
+  document.getElementById('btn-sb-connect').addEventListener('click', () => {
+    ensureSupabaseClient();
+  });
+  document.getElementById('btn-sb-save').addEventListener('click', () => {
+    saveSnapshotToSupabase();
+  });
+  document.getElementById('btn-sb-load').addEventListener('click', () => {
+    loadSnapshotFromSupabase();
+  });
+  document.getElementById('btn-sb-delete').addEventListener('click', () => {
+    deleteSnapshotFromSupabase();
+  });
+
+  /* --- Cargar datos al iniciar: Supabase primero, ejemplo como fallback --- */
+  let loadedFromCloud = false;
+  if (readSupabaseSettings().autoLoad && hasSupabaseConfig()) {
+    loadedFromCloud = await loadSnapshotFromSupabase({ silent: true });
+  }
+  if (!loadedFromCloud) {
+    loadSampleData({ silent: false, skipAutoSave: true });
+  }
 
   updateBadges();
 });
