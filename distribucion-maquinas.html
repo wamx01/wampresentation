@@ -249,6 +249,27 @@
     }
     .team-legend-dot { color: var(--team-color); }
 
+    /* ===== People Search Bar ===== */
+    .people-search-bar {
+      display: flex; align-items: center; gap: .4rem;
+      background: var(--surface2); border: 1px solid var(--border); border-radius: 8px;
+      padding: .35rem .6rem; margin-bottom: .55rem;
+    }
+    .people-search-icon { font-size: .95rem; flex-shrink: 0; }
+    .people-search-input {
+      flex: 1; border: none; background: transparent; font-size: .85rem;
+      color: var(--text); outline: none; min-width: 0; padding: 0;
+    }
+    .people-search-input::placeholder { color: var(--muted); }
+    .people-search-clear {
+      background: none; border: none; cursor: pointer; padding: .15rem .3rem;
+      color: var(--muted); font-size: .8rem; border-radius: 4px; flex-shrink: 0;
+      display: none;
+    }
+    .people-search-clear:hover { background: var(--border); color: var(--text); }
+    .people-search-bar:focus-within { border-color: var(--primary); box-shadow: 0 0 0 2px rgba(37,99,235,.1); }
+    .people-list mark { background: #fde047; color: #1e293b; border-radius: 2px; padding: 0 1px; }
+
     /* ===== Team Filter Bar ===== */
     .team-filter-bar { margin-bottom: .65rem; }
     .team-filter-bar-label {
@@ -796,8 +817,6 @@
 
       <div class="supabase-actions">
         <button class="btn btn-secondary" id="btn-sb-connect">🔌 Validar conexión</button>
-        <button class="btn btn-secondary" id="btn-sb-save">☁️ Guardar nube</button>
-        <button class="btn btn-secondary" id="btn-sb-load">📥 Cargar nube</button>
         <button class="btn btn-danger" id="btn-sb-delete">🗑 Borrar nube</button>
       </div>
 
@@ -868,8 +887,15 @@
       <button class="btn btn-danger" id="btn-clear-people" style="margin-left:auto">🗑 Limpiar todo</button>
     </div>
 
+    <!-- Buscador de personas / equipos -->
+    <div class="people-search-bar">
+      <span class="people-search-icon">🔍</span>
+      <input type="text" id="inp-people-search" class="people-search-input" placeholder="Buscar persona o equipo…" oninput="setPeopleSearch(this.value)">
+      <button class="people-search-clear" id="btn-people-search-clear" onclick="setPeopleSearch(''); document.getElementById('inp-people-search').value=''" title="Limpiar búsqueda">✕</button>
+    </div>
+
     <div id="team-filter-bar" class="team-filter-bar" style="display:none">
-      <div class="team-filter-bar-label">🔍 Filtrar por equipo</div>
+      <div class="team-filter-bar-label">🏷️ Filtrar por equipo</div>
       <div class="team-filter-chips" id="team-filter-chips"></div>
     </div>
 
@@ -988,7 +1014,11 @@
      ================================================================== -->
 <div class="action-bar">
   <button class="btn btn-success btn-lg" id="btn-optimize">⚖️ Balancear / Optimizar Reparto</button>
-  <button class="btn btn-secondary"      id="btn-export-csv">📥 Exportar CSV</button>
+  <span style="width:1px;height:1.5rem;background:var(--border);margin:0 .2rem;flex-shrink:0"></span>
+  <button class="btn btn-secondary"      id="btn-sb-save">☁️ Guardar nube</button>
+  <button class="btn btn-secondary"      id="btn-sb-load">📥 Cargar nube</button>
+  <span style="width:1px;height:1.5rem;background:var(--border);margin:0 .2rem;flex-shrink:0"></span>
+  <button class="btn btn-secondary"      id="btn-export-csv">📊 Exportar CSV</button>
   <button class="btn btn-secondary"      id="btn-export-json">💾 Guardar JSON</button>
   <button class="btn btn-secondary"      id="btn-import-json">📤 Importar JSON</button>
   <input type="file" id="inp-import-json" accept=".json" style="display:none">
@@ -1018,7 +1048,8 @@
 let _uid = 1;
 const uid = () => _uid++;
 
-let _teamFilter = '__all__'; // '__all__' = no filter; '' = free people; string = specific team
+let _teamFilter   = '__all__'; // '__all__' = no filter; '' = free people; string = specific team
+let _peopleSearch = '';        // text search filter for people list
 
 /** Colour palette for team avatars / badges */
 const AVATAR_COLORS = [
@@ -1618,6 +1649,13 @@ function setPersonTeam(id, teamName) {
   }
 }
 
+function setPeopleSearch(q) {
+  _peopleSearch = q.trim().toLowerCase();
+  const clearBtn = document.getElementById('btn-people-search-clear');
+  if (clearBtn) clearBtn.style.display = _peopleSearch ? 'block' : 'none';
+  renderPeople();
+}
+
 function renderPeople() {
   document.getElementById('people-count').textContent = state.people.length;
   const container = document.getElementById('people-list');
@@ -1633,24 +1671,38 @@ function renderPeople() {
   }
 
   // Apply team filter
-  const filtered = _teamFilter === '__all__'
+  let filtered = _teamFilter === '__all__'
     ? state.people
     : _teamFilter === ''
       ? state.people.filter(p => !p.fixedGroupName)
       : state.people.filter(p => (p.fixedGroupName || '').trim().toLowerCase() === _teamFilter.toLowerCase());
 
+  // Apply text search
+  if (_peopleSearch) {
+    filtered = filtered.filter(p =>
+      p.name.toLowerCase().includes(_peopleSearch) ||
+      (p.fixedGroupName || '').toLowerCase().includes(_peopleSearch)
+    );
+  }
+
   if (!filtered.length) {
-    container.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="ei">🔍</span><p>No hay personas en este filtro.</p></div>`;
+    const msg = _peopleSearch
+      ? `No se encontraron resultados para "<strong>${esc(_peopleSearch)}</strong>"`
+      : 'No hay personas en este filtro.';
+    container.innerHTML = `<div class="empty-state" style="grid-column:1/-1"><span class="ei">🔍</span><p>${msg}</p></div>`;
   } else {
     container.innerHTML = filtered.map(p => {
       const initials = getInitials(p.name);
       const idx      = getTeamColorIdx(p.fixedGroupName);
       const av       = idx >= 0 ? AVATAR_COLORS[idx] : { bg: '#f1f5f9', color: '#64748b' };
+      const displayName = _peopleSearch
+        ? esc(p.name).replace(new RegExp(`(${esc(_peopleSearch).replace(/[.*+?^${}()|[\]\\]/g,'\\$&')})`, 'gi'), '<mark>$1</mark>')
+        : esc(p.name);
       return `
       <div class="person-item">
         <div class="person-avatar" style="background:${av.bg};color:${av.color}">${initials}</div>
         <div class="person-info">
-          <div class="person-name" title="${esc(p.name)}">${esc(p.name)}</div>
+          <div class="person-name" title="${esc(p.name)}">${displayName}</div>
           <input type="text" class="person-team-input"
                  value="${esc(p.fixedGroupName || '')}"
                  placeholder="Equipo…"
@@ -3160,6 +3212,11 @@ document.addEventListener('DOMContentLoaded', async () => {
     state.people     = [];
     state.unassigned = [];
     _teamFilter      = '__all__';
+    _peopleSearch    = '';
+    const si = document.getElementById('inp-people-search');
+    if (si) si.value = '';
+    const sc = document.getElementById('btn-people-search-clear');
+    if (sc) sc.style.display = 'none';
     state.groups.forEach(g => (g.memberIds = []));
     renderPeople();
     renderGroups();
