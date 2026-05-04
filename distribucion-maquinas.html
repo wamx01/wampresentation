@@ -552,6 +552,74 @@
       flex-wrap: wrap;
       z-index: 100;
     }
+    .opt-progress {
+      display: none;
+      align-items: center;
+      gap: .55rem;
+      min-width: 260px;
+      max-width: 420px;
+      padding: .4rem .6rem;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--surface2);
+    }
+    .opt-progress.show { display: flex; }
+    .opt-progress.warning {
+      border-color: #fcd34d;
+      background: #fffbeb;
+    }
+    .opt-progress.success {
+      border-color: #86efac;
+      background: #f0fdf4;
+    }
+    .opt-spinner {
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      border: 2px solid #cbd5e1;
+      border-top-color: var(--primary);
+      animation: spin .8s linear infinite;
+      flex-shrink: 0;
+      display: none;
+    }
+    .opt-progress.running .opt-spinner { display: inline-block; }
+    .opt-progress-meta {
+      display: flex;
+      flex-direction: column;
+      gap: .2rem;
+      min-width: 0;
+      flex: 1;
+    }
+    .opt-progress-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .45rem;
+      font-size: .72rem;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+    .opt-progress-text {
+      font-size: .75rem;
+      color: var(--text);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .opt-progress-track {
+      width: 100%;
+      height: 6px;
+      border-radius: 999px;
+      background: #e2e8f0;
+      overflow: hidden;
+    }
+    .opt-progress-fill {
+      width: 0%;
+      height: 100%;
+      background: linear-gradient(90deg, #3b82f6 0%, #06b6d4 100%);
+      transition: width .12s ease;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
     #status-msg {
       font-size: .8125rem;
       margin-left: auto;
@@ -816,7 +884,12 @@
       </div>
 
       <div class="form-group">
-        <label>Transporte (% del costo base)</label>
+        <label title="Intentos máximos de rebalanceo automático">Máx. reintentos</label>
+        <input type="number" id="cfg-maxRetries" value="3" min="1" max="200">
+      </div>
+
+      <div class="form-group">
+        <label>Transporte (% del valor de la máquina)</label>
         <div class="cfg-checkbox">
           <input type="checkbox" id="cfg-autoTransport">
           <span style="font-size:.78rem">Calcular automáticamente</span>
@@ -1005,9 +1078,9 @@
           <tr>
             <th>#</th>
             <th>Nombre</th>
-            <th>Costo Base</th>
-            <th>Transporte</th>
-            <th>Costo Total</th>
+            <th>Valor</th>
+            <th>Costo Transporte</th>
+            <th>Valor Neto</th>
             <th>Acciones</th>
           </tr>
         </thead>
@@ -1072,6 +1145,17 @@
      ================================================================== -->
 <div class="action-bar">
   <button class="btn btn-success btn-lg" id="btn-optimize">⚖️ Balancear / Optimizar Reparto</button>
+  <div class="opt-progress" id="opt-progress" aria-live="polite" aria-atomic="true">
+    <span class="opt-spinner" aria-hidden="true"></span>
+    <div class="opt-progress-meta">
+      <div class="opt-progress-head">
+        <span id="opt-progress-iter">Iteración 0/0</span>
+        <span id="opt-progress-pct">0%</span>
+      </div>
+      <div class="opt-progress-track"><div class="opt-progress-fill" id="opt-progress-fill"></div></div>
+      <div class="opt-progress-text" id="opt-progress-text">Listo para optimizar</div>
+    </div>
+  </div>
   <span style="width:1px;height:1.5rem;background:var(--border);margin:0 .2rem;flex-shrink:0"></span>
   <button class="btn btn-secondary"      id="btn-sb-save">☁️ Guardar nube</button>
   <button class="btn btn-secondary"      id="btn-sb-load">📥 Cargar nube</button>
@@ -1384,6 +1468,7 @@ const state = {
     maxGroupSize:    5,
     absMaxGroupSize: 7,
     tolerancePercent: 20,
+    maxOptimizeRetries: 3,
     autoTransport:   false,
     transportRate:   10   // % del costo base
   },
@@ -1394,14 +1479,32 @@ const FLOATING_POINT_EPSILON = 1e-9;
 const MAX_GROUPS_FOR_EXHAUSTIVE_SEARCH = 8;
 const MAX_MACHINES_FOR_EXHAUSTIVE_SEARCH = 10;
 const MAX_SIZE_OPTIMIZATION_ITERATIONS = 250;
+const DEFAULT_MAX_OPTIMIZE_RETRIES = 3;
 
 /** Lee la configuración del DOM hacia state.config */
 function readConfig() {
   state.config.numGroups        = Math.max(0, parseInt(document.getElementById('cfg-numGroups').value)   || 0);
-  state.config.minGroupSize     = Math.max(1, parseInt(document.getElementById('cfg-minSize').value)     || 3);
-  state.config.maxGroupSize     = Math.max(1, parseInt(document.getElementById('cfg-maxSize').value)     || 5);
-  state.config.absMaxGroupSize  = Math.max(1, parseInt(document.getElementById('cfg-absMax').value)      || 7);
-  state.config.tolerancePercent = Math.max(0, parseFloat(document.getElementById('cfg-tolerance').value) || 20);
+  let minSize  = Math.max(1, parseInt(document.getElementById('cfg-minSize').value)  || 3);
+  let maxSize  = Math.max(1, parseInt(document.getElementById('cfg-maxSize').value)  || 5);
+  let absMax   = Math.max(1, parseInt(document.getElementById('cfg-absMax').value)   || 7);
+
+  // Validar consistencia: min <= max <= absMax
+  if (minSize > maxSize) {
+    toast(`⚠ Tamaño mínimo (${minSize}) no puede ser mayor que el máximo (${maxSize}). Se ajustó el máximo.`, 'warning');
+    maxSize = minSize;
+    document.getElementById('cfg-maxSize').value = maxSize;
+  }
+  if (maxSize > absMax) {
+    toast(`⚠ Tamaño máximo (${maxSize}) no puede ser mayor que el máximo absoluto (${absMax}). Se ajustó el máximo absoluto.`, 'warning');
+    absMax = maxSize;
+    document.getElementById('cfg-absMax').value = absMax;
+  }
+
+  state.config.minGroupSize     = minSize;
+  state.config.maxGroupSize     = maxSize;
+  state.config.absMaxGroupSize  = absMax;
+  state.config.tolerancePercent = Math.max(0, Math.min(100, parseFloat(document.getElementById('cfg-tolerance').value) || 20));
+  state.config.maxOptimizeRetries = Math.min(200, Math.max(1, parseInt(document.getElementById('cfg-maxRetries').value) || DEFAULT_MAX_OPTIMIZE_RETRIES));
   state.config.autoTransport    = document.getElementById('cfg-autoTransport').checked;
   state.config.transportRate    = Math.max(0, parseFloat(document.getElementById('cfg-transportRate').value) || 0);
   state.mode                    = document.getElementById('cfg-mode').value;
@@ -1414,6 +1517,7 @@ function syncConfigToDom() {
   document.getElementById('cfg-maxSize').value = state.config.maxGroupSize;
   document.getElementById('cfg-absMax').value = state.config.absMaxGroupSize;
   document.getElementById('cfg-tolerance').value = state.config.tolerancePercent;
+  document.getElementById('cfg-maxRetries').value = state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES;
   document.getElementById('cfg-autoTransport').checked = state.config.autoTransport;
   document.getElementById('cfg-transportRate').value = state.config.transportRate;
   document.getElementById('grupos-auto-panel').style.display = state.mode === 'auto' ? '' : 'none';
@@ -1462,6 +1566,7 @@ function applySnapshot(snapshot, options = {}) {
       maxGroupSize: Math.max(1, parseInt(safeConfig.maxGroupSize) || 5),
       absMaxGroupSize: Math.max(1, parseInt(safeConfig.absMaxGroupSize) || 7),
       tolerancePercent: Math.max(0, parseFloat(safeConfig.tolerancePercent) || 20),
+      maxOptimizeRetries: Math.min(200, Math.max(1, parseInt(safeConfig.maxOptimizeRetries) || DEFAULT_MAX_OPTIMIZE_RETRIES)),
       autoTransport: !!safeConfig.autoTransport,
       transportRate: Math.max(0, parseFloat(safeConfig.transportRate) || 0)
     };
@@ -1666,11 +1771,30 @@ async function deleteSnapshotFromSupabase() {
 /*  Costo total de una máquina (base + transporte)                     */
 /* ------------------------------------------------------------------ */
 
-function totalCost(machine) {
-  const transport = state.config.autoTransport
+function transportOf(machine) {
+  return state.config.autoTransport
     ? machine.baseCost * (state.config.transportRate / 100)
     : (machine.transportCost || 0);
-  return machine.baseCost + transport;
+}
+
+/**
+ * Valor neto de la máquina para el grupo (lo que ganan en total).
+ * Si el transporte supera el valor, muestra un aviso y retorna 1 para que la
+ * proporcionalidad de Hamilton no se quiebre — pero el usuario debe saberlo.
+ */
+function totalCost(machine) {
+  const net = machine.baseCost - transportOf(machine);
+  if (net <= 0) {
+    // Aviso persistente en consola; toast de alerta la primera vez por máquina
+    const key = `badNet_${machine.id}`;
+    if (!totalCost._warned) totalCost._warned = new Set();
+    if (!totalCost._warned.has(key)) {
+      totalCost._warned.add(key);
+      toast(`⚠ "${machine.name}": el costo de transporte supera el valor de la máquina. El valor neto será negativo o cero — revisa los valores.`, 'warning', 7000);
+    }
+    return 1;  // guard mínimo para que el algoritmo no explote
+  }
+  return net;
 }
 
 /* ------------------------------------------------------------------ */
@@ -1906,7 +2030,12 @@ function setTeamFilter(team) {
 
 function addMachine(name, baseCost, transportCost) {
   name = name.trim();
-  if (!name || isNaN(baseCost) || baseCost < 0) return false;
+  if (!name) { toast('El nombre de la máquina no puede estar vacío', 'error'); return false; }
+  if (isNaN(baseCost) || baseCost < 0) { toast('El valor de la máquina debe ser un número positivo', 'error'); return false; }
+  if (state.machines.some(m => m.name.toLowerCase() === name.toLowerCase())) {
+    toast(`Ya existe una máquina con el nombre "${name}"`, 'warning');
+    return false;
+  }
   state.machines.push({
     id: uid(),
     name,
@@ -1931,9 +2060,21 @@ function editMachineField(id, field, rawValue) {
   const m = state.machines.find(m => m.id === id);
   if (!m) return;
   if (field === 'name') {
-    m.name = rawValue.trim() || m.name;
+    const newName = rawValue.trim();
+    if (!newName) { renderMachines(); return; }  // revert vacío
+    const duplicate = state.machines.find(other => other.id !== id && other.name.toLowerCase() === newName.toLowerCase());
+    if (duplicate) {
+      toast(`Ya existe una máquina con el nombre "${newName}"`, 'warning');
+      renderMachines();  // revert en pantalla
+      return;
+    }
+    m.name = newName;
   } else {
     m[field] = parseFloat(rawValue) || 0;
+  }
+  // Limpiar caché de avisos de valor neto para que re-evalúe con el nuevo valor
+  if (field === 'baseCost' || field === 'transportCost') {
+    if (totalCost._warned) totalCost._warned.delete(`badNet_${id}`);
   }
   renderMachines();
   scheduleSupabaseAutoSave();
@@ -1993,6 +2134,14 @@ function autoCreateGroups() {
   if (!state.people.length)   { toast('Agrega personas primero', 'error');     return false; }
 
   const numMachines = state.machines.length;
+  const totalGroups = cfgN > 0 ? cfgN : numMachines;
+
+  // Validar que hay suficientes personas para cubrir el mínimo por grupo
+  const minRequired = totalGroups * minGroupSize;
+  if (state.people.length < minRequired) {
+    toast(`⚠ Con ${totalGroups} grupos y tamaño mínimo ${minGroupSize} se necesitan al menos ${minRequired} personas, pero solo hay ${state.people.length}. Reduce el mínimo de grupo o agrega personas.`, 'error', 8000);
+    return false;
+  }
 
   // ── Separate people into pre-assigned (fixed) and free ──────────────────
   const fixedMap = new Map(); // normalised key → { displayName, people[] }
@@ -2037,7 +2186,7 @@ function autoCreateGroups() {
   }
 
   const numFixedGroups = establishedEntries.length;
-  const totalGroups    = cfgN > 0 ? cfgN : numMachines;
+  // totalGroups ya declarado arriba para la validación temprana
   const numFreeGroups  = Math.max(0, totalGroups - numFixedGroups);
 
   // Ordenar máquinas por costo descendente
@@ -2204,19 +2353,25 @@ function computeProportionalSizes(costs, total, minSize, maxSize) {
   }
 
   // Fase 2: Refinamiento iterativo (ascenso de colina)
-  // Mueve una persona entre pares de grupos si mejora la varianza de CPP
-  // (la asignación óptima para comparar es: mayor costo → mayor grupo)
+  // Penalización asimétrica: estar POR DEBAJO del promedio pesa 4x más
+  // que estar por encima, porque el objetivo es que nadie pierda.
   function cppVariance(sz) {
     const sorted = [...sz].map((s, i) => ({ s, c: costs[i] }))
       .sort((a, b) => b.c - a.c);
     const sortedBySz = [...sorted].sort((a, b) => b.s - a.s);
-    // Par costo↓ con tamaño↓ para calcular CPP asumiendo la asignación óptima
     const cpps = sorted.map((mc, k) => {
       const sz2 = sortedBySz[k].s;
       return sz2 > 0 ? mc.c / sz2 : 0;
     });
-    const avg = cpps.reduce((a, b) => a + b, 0) / cpps.length;
-    return cpps.reduce((s, x) => s + (x - avg) ** 2, 0);
+    // Promedio ponderado global (mismo criterio que calculateResults)
+    const totalVal  = sorted.reduce((s, mc) => s + mc.c, 0);
+    const totalSz   = sortedBySz.reduce((s, mc) => s + mc.s, 0);
+    const globalAvg = totalSz > 0 ? totalVal / totalSz : 0;
+    // Peso asimétrico: bajo el promedio (menos ganancia) penaliza 4x más
+    return cpps.reduce((s, x) => {
+      const diff = x - globalAvg;
+      return s + (diff < 0 ? 4 : 1) * diff * diff;
+    }, 0);
   }
 
   let improved = true;
@@ -2263,13 +2418,16 @@ function evaluateMachineAssignment(groupSizes, machineIndices, machineCosts, tol
   const stdDev = Math.sqrt(variance);
   const cvPct = globalAvg > 0 ? (stdDev / globalAvg) * 100 : 0;
   const pctDeviations = cppValues.map(value => globalAvg > 0 ? ((value - globalAvg) / globalAvg) * 100 : 0);
-  const maxPctDeviation = pctDeviations.length
-    ? Math.max(...pctDeviations.map(value => Math.abs(value)))
-    : 0;
+  // Solo penalizar los grupos que estén POR DEBAJO del promedio (nadie pierde).
+  // Grupos por encima son aceptables: ganan más, no menos.
   const countOutsideTolerance = pctDeviations.reduce(
-    (count, value) => count + (Math.abs(value) > tolerance + FLOATING_POINT_EPSILON ? 1 : 0),
+    (count, value) => count + (value < -(tolerance + FLOATING_POINT_EPSILON) ? 1 : 0),
     0
   );
+  // maxPctDeviation solo mide cuánto están los grupos por DEBAJO del mínimo.
+  const maxPctDeviation = pctDeviations.length
+    ? Math.max(0, ...pctDeviations.map(v => v < 0 ? Math.abs(v) : 0))
+    : 0;
 
   return {
     machineIndices: [...machineIndices],
@@ -2399,13 +2557,75 @@ function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCo
 }
 
 /** Asigna máquinas con la mejor combinación hallada por findBestMachineAssignment(). */
+
+/**
+ * Cuando hay más grupos que máquinas, fusiona los pares de grupos más pequeños
+ * hasta que la cantidad de grupos iguale la de máquinas.
+ * Respeta absMaxGroupSize: si la fusión supera ese límite, busca el siguiente par.
+ * Devuelve true si se realizó al menos una fusión.
+ */
+function mergeSmallestGroups() {
+  const nm = state.machines.length;
+  let merged = false;
+  const absMax = state.config.absMaxGroupSize || 999;
+
+  while (state.groups.length > nm) {
+    // Ordenar siempre de menor a mayor tamaño para fusionar los más chicos primero
+    const sorted = [...state.groups]
+      .map((g, idx) => ({ g, idx, size: g.memberIds.length }))
+      .sort((a, b) => a.size - b.size);
+
+    // Buscar el primer par (a, b) cuya suma <= absMax
+    let foundPair = false;
+    for (let a = 0; a < sorted.length && !foundPair; a++) {
+      for (let b = a + 1; b < sorted.length && !foundPair; b++) {
+        const ga = sorted[a].g;
+        const gb = sorted[b].g;
+        if (ga.memberIds.length + gb.memberIds.length <= absMax) {
+          // Fusionar: mover todos los miembros de ga a gb
+          gb.memberIds = [...gb.memberIds, ...ga.memberIds];
+          // Actualizar nombre para reflejar la fusión
+          gb.name = `${gb.name} + ${ga.name}`;
+          // Eliminar ga de state.groups
+          state.groups = state.groups.filter(g => g.id !== ga.id);
+          merged = true;
+          foundPair = true;
+        }
+      }
+    }
+
+    if (!foundPair) {
+      // Ningún par cabe dentro de absMax.
+      // Forzar fusión del par más pequeño y avisar al usuario.
+      const ga = sorted[0].g;
+      const gb = sorted[1].g;
+      const mergedSize = ga.memberIds.length + gb.memberIds.length;
+      toast(`⚠ La fusión de "${gb.name}" + "${ga.name}" resulta en ${mergedSize} personas, superando el máximo absoluto de ${absMax}. Considera aumentar el máximo absoluto en configuración.`, 'warning', 7000);
+      gb.memberIds = [...gb.memberIds, ...ga.memberIds];
+      gb.name = `${gb.name} + ${ga.name}`;
+      state.groups = state.groups.filter(g => g.id !== ga.id);
+      merged = true;
+    }
+  }
+
+  return merged;
+}
+
 function assignMachinesOptimal() {
   const groups   = state.groups;
   const machines = state.machines;
   const n        = Math.min(groups.length, machines.length);
   if (!n) return;
 
-  const gSizes = groups.slice(0, n).map(g => g.memberIds.length);
+  // Si hay más grupos que máquinas, priorizar los grupos con más personas.
+  // Esto evita sesgos por orden de creación y reduce máquinas en grupos vacíos.
+  const targetGroupIndices = groups
+    .map((g, idx) => ({ idx, size: g.memberIds.length }))
+    .sort((a, b) => (b.size - a.size) || (a.idx - b.idx))
+    .slice(0, n)
+    .map(item => item.idx);
+
+  const gSizes = targetGroupIndices.map(idx => groups[idx].memberIds.length);
   const mCosts = machines.map(m => totalCost(m));
   const bestAssign = findBestMachineAssignment(gSizes, mCosts);
   if (!bestAssign) return null;
@@ -2413,7 +2633,8 @@ function assignMachinesOptimal() {
   // Aplicar la mejor asignación encontrada
   groups.forEach(g => (g.machineId = null));
   for (let i = 0; i < n; i++) {
-    groups[i].machineId = machines[bestAssign.machineIndices[i]].id;
+    const groupIdx = targetGroupIndices[i];
+    groups[groupIdx].machineId = machines[bestAssign.machineIndices[i]].id;
   }
 }
 
@@ -2462,11 +2683,18 @@ function removePersonFromGroup(personId) {
  *  distribuye de forma uniforme.
  *  Las personas con equipo pre-asignado se fijan al grupo cuyo nombre coincide;
  *  las demás se distribuyen libremente. */
-function autoDistribute() {
+function autoDistribute(options = {}) {
+  const { silent = false } = options;
   readConfig();
   const { absMaxGroupSize } = state.config;
-  if (!state.groups.length) { toast('Crea al menos un grupo primero', 'error'); return; }
-  if (!state.people.length) { toast('Agrega personas primero', 'error'); return; }
+  if (!state.groups.length) {
+    if (!silent) toast('Crea al menos un grupo primero', 'error');
+    return;
+  }
+  if (!state.people.length) {
+    if (!silent) toast('Agrega personas primero', 'error');
+    return;
+  }
 
   // ── Separar personas en pre-asignadas (fijas) y libres ──────────────────
   const freePeople  = state.people.filter(p => !(p.fixedGroupName && p.fixedGroupName.trim()));
@@ -2488,7 +2716,7 @@ function autoDistribute() {
     }
   });
 
-  if (unmatched.length) {
+  if (!silent && unmatched.length) {
     toast(
       `⚠ ${unmatched.length} persona(s) con equipo pre-asignado no encontraron un grupo con ese nombre y serán distribuidas libremente.`,
       'warning'
@@ -2499,8 +2727,10 @@ function autoDistribute() {
   const toDistribute = [...freePeople, ...unmatched].sort(() => Math.random() - 0.5);
 
   if (!toDistribute.length) {
-    renderGroups();
-    toast('Personas distribuidas en sus equipos pre-asignados ✔', 'success');
+    if (!silent) {
+      renderGroups();
+      toast('Personas distribuidas en sus equipos pre-asignados ✔', 'success');
+    }
     return;
   }
 
@@ -2526,11 +2756,18 @@ function autoDistribute() {
   // no vaciarlo durante la optimización y desperdiciar una máquina asignable.
   const minTotals = baseSizes.map((base, idx) => base + (base === 0 && (sizes[idx] || 0) > 0 ? 1 : 0));
   const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
+  // Usar los costos en ORDEN DE GRUPO (mapeados por la asignación actual);
+  // si alguno no tiene máquina, usar el costo promedio como fallback.
+  const avgMachineCost = state.machines.reduce((s, m) => s + totalCost(m), 0) / (state.machines.length || 1);
+  const groupOrderedCosts = state.groups.map(g => {
+    const m = g.machineId ? state.machines.find(m => m.id === g.machineId) : null;
+    return m ? totalCost(m) : avgMachineCost;
+  });
   const optimized = optimizeGroupSizesIterative(
     initialTotals,
     minTotals,
     maxTotals,
-    state.machines.map(m => totalCost(m)),
+    groupOrderedCosts,
     state.config.tolerancePercent
   );
   const targetTotals = optimized.sizes;
@@ -2542,14 +2779,16 @@ function autoDistribute() {
     idx += extra;
   });
 
-  renderGroups();
-  toast(
-    allAssigned
-      ? 'Personas distribuidas proporcionalmente al costo de cada máquina'
-      : 'Personas distribuidas automáticamente (asigna máquinas para distribución óptima)',
-    'success'
-  );
-  scheduleSupabaseAutoSave();
+  if (!silent) {
+    renderGroups();
+    toast(
+      allAssigned
+        ? 'Personas distribuidas proporcionalmente al costo de cada máquina'
+        : 'Personas distribuidas automáticamente (asigna máquinas para distribución óptima)',
+      'success'
+    );
+    scheduleSupabaseAutoSave();
+  }
 }
 
 /* --- Renderizado de grupos --- */
@@ -2722,36 +2961,46 @@ function calculateResults() {
   const groupStats = valid.map(g => {
     const machine = state.machines.find(m => m.id === g.machineId);
     const members = g.memberIds.map(id => state.people.find(p => p.id === id)).filter(Boolean);
-    const tc      = totalCost(machine);
-    const cpp     = tc / members.length;
-    return { group: g, machine, members, total: tc, cpp, size: members.length };
+    const netValue        = machine.baseCost - transportOf(machine);  // puede ser negativo
+    const tc              = Math.max(netValue, 1);  // valor neto guardado (mismo que totalCost)
+    const transp          = transportOf(machine);
+    const grossPerPerson  = members.length > 0 ? machine.baseCost / members.length : 0;  // ingreso bruto/persona
+    const investPerPerson = members.length > 0 ? transp / members.length : 0;            // inversión/persona
+    const cpp             = members.length > 0 ? netValue / members.length : 0;          // ganancia neta REAL/persona (puede ser negativa)
+    return { group: g, machine, members, total: tc, netValue, transport: transp, grossPerPerson, investPerPerson, cpp, size: members.length };
   });
 
-  const totalAllCosts  = groupStats.reduce((s, x) => s + x.total, 0);
+  // Usar netValue REAL (puede ser negativo) para las métricas de balance
+  const totalNetValue  = groupStats.reduce((s, x) => s + x.netValue, 0);
+  const totalAllCosts  = totalNetValue;  // alias para compatibilidad con renderResults
   const totalAllPeople = groupStats.reduce((s, x) => s + x.size,  0);
-  const globalAvg      = totalAllCosts / totalAllPeople;   // promedio ponderado (global justo)
+  const globalAvg      = totalAllPeople > 0 ? totalNetValue / totalAllPeople : 0;  // ganancia neta promedio/persona
 
-  // Varianza simple del costo por persona entre grupos
-  const cppArr  = groupStats.map(x => x.cpp);
+  // Dispersión de la ganancia neta/persona respecto al promedio ponderado global.
+  const cppArr  = groupStats.map(x => x.cpp);   // ganancia neta real/persona por grupo
   const avgCpp  = cppArr.reduce((a, b) => a + b, 0) / cppArr.length;
-  const variance = cppArr.reduce((s, x) => s + (x - avgCpp) ** 2, 0) / cppArr.length;
+  const variance = cppArr.reduce((s, x) => s + (x - globalAvg) ** 2, 0) / cppArr.length;
   const stdDev  = Math.sqrt(variance);
-  const cvPct   = globalAvg > 0 ? (stdDev / globalAvg) * 100 : 0; // coeficiente de variación
+  const cvPct   = Math.abs(globalAvg) > 0.01 ? (stdDev / Math.abs(globalAvg)) * 100 : 0;
 
   const tol = state.config.tolerancePercent;
 
   groupStats.forEach(s => {
     s.deviation    = s.cpp - globalAvg;
     s.pctDeviation = globalAvg > 0 ? (s.deviation / globalAvg) * 100 : 0;
-    s.isOver       = s.pctDeviation >  tol;
-    s.isUnder      = s.pctDeviation < -tol;
+    s.isOver       = s.pctDeviation >  tol;   // ganan MÁS que el promedio: BIEN ✅
+    s.isUnder      = s.pctDeviation < -tol;   // ganan MENOS que el promedio: MAL ❌
   });
+
+  // El reparto es justo cuando nadie está por DEBAJO del mínimo aceptable.
+  // Que algunos estén por encima es aceptable (nadie pierde).
+  const numUnder = groupStats.filter(s => s.isUnder).length;
 
   return {
     groupStats,
     totalAllCosts, totalAllPeople,
     globalAvg, avgCpp, stdDev, cvPct,
-    isBalanced: cvPct <= tol
+    isBalanced: numUnder === 0
   };
 }
 
@@ -2772,18 +3021,19 @@ function renderResults(res) {
   state.results = res;
 
   /* Alerta global */
+  const numUnder = res.groupStats.filter(s => s.isUnder).length;
   const alertHtml = res.isBalanced
-    ? `<div class="alert alert-success">✅ Reparto equilibrado — Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong> (tolerancia: ${state.config.tolerancePercent}%)</div>`
-    : `<div class="alert alert-warning">⚠️ Algunos grupos superan la tolerancia de ${state.config.tolerancePercent}% — Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong></div>`;
+    ? `<div class="alert alert-success">✅ Reparto justo — todos los grupos ganan al menos el mínimo aceptable. Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong> (tolerancia: ${state.config.tolerancePercent}%)</div>`
+    : `<div class="alert alert-warning">⚠️ ${numUnder} grupo(s) ganan por debajo del mínimo aceptable (−${state.config.tolerancePercent}% del promedio). Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong></div>`;
 
   /* Cajas de métricas */
   const statsHtml = `
     <div class="stats-row">
       <div class="stat-box"><div class="slabel">Total personas</div>  <div class="svalue">${res.totalAllPeople}</div></div>
       <div class="stat-box"><div class="slabel">Grupos con máquina</div><div class="svalue">${res.groupStats.length}</div></div>
-      <div class="stat-box"><div class="slabel">Costo total</div>      <div class="svalue" style="font-size:.95rem">${fmt(res.totalAllCosts)}</div></div>
-      <div class="stat-box"><div class="slabel">Promedio global/persona</div><div class="svalue" style="font-size:.95rem">${fmt(res.globalAvg)}</div></div>
-      <div class="stat-box"><div class="slabel">Desv. estándar ($/persona)</div><div class="svalue" style="font-size:.95rem">${fmt(res.stdDev)}</div></div>
+      <div class="stat-box"><div class="slabel">Valor neto total máquinas</div>      <div class="svalue" style="font-size:.95rem">${fmt(res.totalAllCosts)}</div></div>
+      <div class="stat-box"><div class="slabel">Ganancia neta/persona (prom.)</div><div class="svalue" style="font-size:.95rem">${fmt(res.globalAvg)}</div></div>
+      <div class="stat-box"><div class="slabel">Desv. est. (ganancia/persona)</div><div class="svalue" style="font-size:.95rem">${fmt(res.stdDev)}</div></div>
       <div class="stat-box">
         <div class="slabel">Coef. de variación</div>
         <div class="svalue" style="color:${res.isBalanced ? 'var(--success)' : 'var(--warning)'}">${res.cvPct.toFixed(1)}%</div>
@@ -2797,24 +3047,25 @@ function renderResults(res) {
         <thead>
           <tr>
             <th>Grupo</th><th>Máquina</th><th>Personas</th>
-            <th>Costo total</th><th>Costo/persona</th>
+            <th>Ingreso bruto/p</th><th>Inversión/p</th><th>Ganancia neta/p</th>
             <th>Desv. $</th><th>Desv. %</th><th>Estado</th>
           </tr>
         </thead>
         <tbody>
           ${res.groupStats.map(s => {
-            const cls   = s.isOver ? 'over' : s.isUnder ? 'under' : 'ok';
-            const badge = s.isOver
-              ? `<span class="badge badge-danger">⬆ Por encima</span>`
-              : s.isUnder
-                ? `<span class="badge badge-warning">⬇ Por debajo</span>`
+            const cls   = s.isUnder ? 'under' : s.isOver ? 'over' : 'ok';
+            const badge = s.isUnder
+              ? `<span class="badge badge-danger">⬇ Por debajo</span>`
+              : s.isOver
+                ? `<span class="badge badge-success">⬆ Por encima</span>`
                 : `<span class="badge badge-success">✓ OK</span>`;
             return `
             <tr>
               <td><strong>${esc(s.group.name)}</strong></td>
               <td>${esc(s.machine.name)}</td>
               <td>${s.size}</td>
-              <td>${fmt(s.total)}</td>
+              <td>${fmt(s.grossPerPerson)}</td>
+              <td>${fmt(s.investPerPerson)}</td>
               <td>${fmt(s.cpp)}</td>
               <td class="${cls}">${fmt(s.deviation)}</td>
               <td class="${cls}">${fmtPct(s.pctDeviation)}</td>
@@ -2829,22 +3080,28 @@ function renderResults(res) {
   const cardsHtml = `
     <div class="results-grid">
       ${res.groupStats.map(s => {
-        const barColor = s.isOver ? 'var(--danger)' : s.isUnder ? 'var(--warning)' : 'var(--success)';
+        const barColor = s.isUnder ? 'var(--danger)' : s.isOver ? 'var(--success)' : 'var(--success)';
         const barPct   = Math.min(100, Math.abs(s.pctDeviation)).toFixed(1);
         return `
         <div class="group-card">
           <div class="group-card-hd">
             <h3>${esc(s.group.name)}</h3>
-            <span class="badge ${s.isOver ? 'badge-danger' : s.isUnder ? 'badge-warning' : 'badge-success'}">
+            <span class="badge ${s.isUnder ? 'badge-danger' : 'badge-success'}">
               ${fmtPct(s.pctDeviation)} vs. prom.
             </span>
           </div>
           <div class="group-card-bd">
             <div class="g-stat"><span class="k">Máquina</span>        <span class="v">${esc(s.machine.name)}</span></div>
             <div class="g-stat"><span class="k">Personas</span>       <span class="v">${s.size}</span></div>
-            <div class="g-stat"><span class="k">Costo total</span>    <span class="v">${fmt(s.total)}</span></div>
-            <div class="g-stat"><span class="k">Costo/persona</span>  <span class="v">${fmt(s.cpp)}</span></div>
-            <div class="g-stat"><span class="k">Prom. global/p.</span><span class="v">${fmt(res.globalAvg)}</span></div>
+            <div class="g-stat"><span class="k">Valor máquina</span>       <span class="v">${fmt(s.machine.baseCost)}</span></div>
+            <div class="g-stat"><span class="k">Costo transporte</span>    <span class="v">${fmt(s.transport)}</span></div>
+            <div class="g-stat"><span class="k">Valor neto</span>          <span class="v">${fmt(s.netValue)}</span></div>
+            <div class="g-stat" style="border-top:1px solid var(--border);padding-top:.4rem;margin-top:.2rem">
+              <span class="k">Ingreso bruto/persona</span>  <span class="v">${fmt(s.grossPerPerson)}</span>
+            </div>
+            <div class="g-stat"><span class="k">Inversión/persona</span>   <span class="v" style="color:var(--warning)">${fmt(s.investPerPerson)}</span></div>
+            <div class="g-stat"><span class="k">Ganancia neta/persona</span><span class="v" style="color:var(--success)">${fmt(s.cpp)}</span></div>
+            <div class="g-stat"><span class="k">Prom. ganancia neta/p.</span><span class="v">${fmt(res.globalAvg)}</span></div>
             <div class="g-stat">
               <span class="k">Desviación</span>
               <span class="v" style="color:${barColor}">${fmt(s.deviation)} (${fmtPct(s.pctDeviation)})</span>
@@ -2861,14 +3118,14 @@ function renderResults(res) {
       }).join('')}
     </div>`;
 
-  /* Advertencias individuales */
-  const overTol = res.groupStats.filter(s => s.isOver || s.isUnder);
-  const warningsHtml = overTol.length
-    ? overTol.map(s => `
+  /* Advertencias individuales: solo para grupos que están POR DEBAJO */
+  const underGroups = res.groupStats.filter(s => s.isUnder);
+  const warningsHtml = underGroups.length
+    ? underGroups.map(s => `
         <div class="alert alert-warning">
           ⚠ <strong>${esc(s.group.name)}</strong> (${esc(s.machine.name)}):
-          costo/persona ${fmt(s.cpp)} está un ${Math.abs(s.pctDeviation).toFixed(1)}%
-          ${s.isOver ? 'por encima' : 'por debajo'} del promedio (${fmt(res.globalAvg)}).
+          ganancia/persona ${fmt(s.cpp)} está un ${Math.abs(s.pctDeviation).toFixed(1)}%
+          por debajo del promedio (${fmt(res.globalAvg)}). Considera mover personas a este grupo.
         </div>`).join('')
     : '';
 
@@ -2991,43 +3248,207 @@ function renderGroupsPreview() {
 /*  FLUJO PRINCIPAL: OPTIMIZAR                                         */
 /* ------------------------------------------------------------------ */
 
-function optimize() {
+function countGroupsOutsideTolerance(results) {
+  if (!results || !Array.isArray(results.groupStats)) return Number.POSITIVE_INFINITY;
+  const tol = state.config.tolerancePercent;
+  // Solo cuenta grupos que ganén MENOS que el mínimo aceptable (por debajo de -tol%).
+  // Grupos por encima del promedio son bienvenidos.
+  return results.groupStats.reduce(
+    (count, g) => count + (g.pctDeviation < -(tol + FLOATING_POINT_EPSILON) ? 1 : 0),
+    0
+  );
+}
+
+function captureGroupStateSnapshot() {
+  return state.groups.map(g => ({
+    id: g.id,
+    machineId: g.machineId || null,
+    memberIds: [...g.memberIds]
+  }));
+}
+
+function applyGroupStateSnapshot(snapshot) {
+  if (!Array.isArray(snapshot)) return;
+  const byId = new Map(snapshot.map(s => [s.id, s]));
+  state.groups.forEach(g => {
+    const saved = byId.get(g.id);
+    if (!saved) return;
+    g.machineId = saved.machineId || null;
+    g.memberIds = [...saved.memberIds];
+  });
+}
+
+function updateOptimizeProgress({ running = false, warning = false, success = false, attempt = 0, total = 0, text = '' } = {}) {
+  const panel = document.getElementById('opt-progress');
+  const iterEl = document.getElementById('opt-progress-iter');
+  const pctEl = document.getElementById('opt-progress-pct');
+  const fillEl = document.getElementById('opt-progress-fill');
+  const textEl = document.getElementById('opt-progress-text');
+  if (!panel || !iterEl || !pctEl || !fillEl || !textEl) return;
+
+  const safeTotal = Math.max(0, total || 0);
+  const safeAttempt = Math.max(0, Math.min(attempt || 0, safeTotal || attempt || 0));
+  const pct = safeTotal > 0 ? Math.round((safeAttempt / safeTotal) * 100) : 0;
+
+  panel.classList.add('show');
+  panel.classList.toggle('running', !!running);
+  panel.classList.toggle('warning', !!warning);
+  panel.classList.toggle('success', !!success);
+
+  iterEl.textContent = `Iteración ${safeAttempt}/${safeTotal}`;
+  pctEl.textContent = `${pct}%`;
+  fillEl.style.width = `${Math.max(0, Math.min(100, pct))}%`;
+  textEl.textContent = text || (running ? 'Optimizando reparto...' : 'Listo');
+}
+
+function getUnresolvableMessage(results, attempts, ng, nm) {
+  if (!results) {
+    return `No fue posible calcular un reparto válido después de ${attempts} intento(s). Revisa que haya personas, grupos y máquinas asignables.`;
+  }
+
+  const outside = countGroupsOutsideTolerance(results);
+  const maxDev = results.groupStats.length
+    ? Math.max(...results.groupStats.map(g => Math.abs(g.pctDeviation || 0)))
+    : 0;
+  const reasons = [];
+
+  if (nm <= 1) {
+    reasons.push('solo hay una máquina disponible para repartir el costo entre grupos');
+  }
+  if (state.config.tolerancePercent <= 5) {
+    reasons.push('la tolerancia configurada es muy estricta para costos y tamaños enteros');
+  }
+
+  const reasonText = reasons.length
+    ? ` Posibles causas: ${reasons.join('; ')}.`
+    : '';
+
+  return `Se agotaron ${attempts} intento(s) y el reparto no pudo entrar en la tolerancia de ${state.config.tolerancePercent}%. Mejor resultado: ${outside} grupo(s) fuera del límite, desviación máxima ${maxDev.toFixed(1)}%.${reasonText}`;
+}
+
+function nextUiTick() {
+  return new Promise(resolve => requestAnimationFrame(() => setTimeout(resolve, 0)));
+}
+
+async function optimize() {
   readConfig();
 
-  if (state.mode === 'auto') {
-    if (!autoCreateGroups()) return;
-  } else {
-    if (!state.groups.length) {
-      toast('En modo manual, crea grupos en la pestaña Grupos primero', 'error');
-      return;
+  const optimizeBtn = document.getElementById('btn-optimize');
+  if (optimizeBtn) optimizeBtn.disabled = true;
+
+  try {
+    if (state.mode === 'manual') {
+      if (!state.groups.length) {
+        toast('En modo manual, crea grupos en la pestaña Grupos primero', 'error');
+        return;
+      }
+    } else {
+      if (!autoCreateGroups()) return;
     }
-  }
 
-  // Advertir si hay más máquinas que grupos o viceversa
-  const ng = state.groups.length;
-  const nm = state.machines.length;
-  if (ng < nm) {
-    toast(`⚠ Hay ${nm} máquinas pero solo ${ng} grupos. ${nm - ng} máquina(s) no serán asignadas.`, 'warning');
-  } else if (ng > nm) {
-    toast(`⚠ Hay más grupos (${ng}) que máquinas (${nm}). ${ng - nm} grupo(s) no recibirán máquina.`, 'warning');
-  }
+    // Fusionar grupos sobrantes antes de asignar máquinas
+    const ng = state.groups.length;
+    const nm = state.machines.length;
+    if (ng > nm) {
+      const wasMerged = mergeSmallestGroups();
+      if (wasMerged) {
+        toast('ℹ Se fusionaron grupos pequeños para que cada máquina tenga un grupo asignado.', 'info');
+      }
+    } else if (ng < nm) {
+      toast(`⚠ Hay ${nm} máquinas pero solo ${ng} grupos. ${nm - ng} máquina(s) no serán asignadas.`, 'warning');
+    }
 
-  assignMachinesOptimal();
-  renderGroups();
-  updateBadges();
+    let results = null;
+    let attempts = 1;
 
-  const results = calculateResults();
-  renderResults(results);
-  switchTab('resultados');
-  if (results) {
-    toast(
-      results.isBalanced
-        ? `✅ Reparto equilibrado — CV: ${results.cvPct.toFixed(1)}%`
-        : `⚠ Reparto con desequilibrio — CV: ${results.cvPct.toFixed(1)}%`,
-      results.isBalanced ? 'success' : 'warning'
-    );
+    if (state.mode === 'auto') {
+      const maxRetries = Math.min(200, Math.max(1, state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES));
+      let bestSnapshot = null;
+      let bestResults = null;
+
+      for (let attempt = 1; attempt <= maxRetries; attempt++) {
+        attempts = attempt;
+        updateOptimizeProgress({
+          running: true,
+          attempt,
+          total: maxRetries,
+          text: `Iteración ${attempt} de ${maxRetries}...`
+        });
+        await nextUiTick();
+
+        // Partir siempre del mejor estado conocido para que cada iteración mejore sobre la anterior
+        if (bestSnapshot) applyGroupStateSnapshot(bestSnapshot);
+
+        assignMachinesOptimal();
+        autoDistribute({ silent: true });
+
+        const candidate = calculateResults();
+        if (!candidate) break;
+
+        const candidateOutside = countGroupsOutsideTolerance(candidate);
+        const bestOutside = countGroupsOutsideTolerance(bestResults);
+        const isBetter = !bestResults
+          || candidateOutside < bestOutside
+          || (candidateOutside === bestOutside && candidate.cvPct + FLOATING_POINT_EPSILON < bestResults.cvPct);
+
+        if (isBetter) {
+          bestResults = candidate;
+          bestSnapshot = captureGroupStateSnapshot();
+        }
+
+        if (candidate.isBalanced) break;
+      }
+
+      if (bestSnapshot) applyGroupStateSnapshot(bestSnapshot);
+      results = calculateResults();
+      updateOptimizeProgress({
+        running: false,
+        warning: !!results && !results.isBalanced,
+        success: !!results && results.isBalanced,
+        attempt: attempts,
+        total: maxRetries,
+        text: results && results.isBalanced
+          ? `Reparto equilibrado en ${attempts} intento(s).`
+          : getUnresolvableMessage(results, attempts, ng, nm)
+      });
+    } else {
+      assignMachinesOptimal();
+      results = calculateResults();
+      updateOptimizeProgress({
+        running: false,
+        success: !!results && results.isBalanced,
+        warning: !!results && !results.isBalanced,
+        attempt: 1,
+        total: 1,
+        text: results && results.isBalanced
+          ? 'Modo manual: reparto equilibrado.'
+          : 'Modo manual: revisa grupos/máquinas para mejorar el balance.'
+      });
+    }
+
+    renderGroups();
+    updateBadges();
+    renderResults(results);
+    switchTab('resultados');
+    if (results) {
+      if (results.isBalanced) {
+        toast(
+          `✅ Reparto equilibrado — CV: ${results.cvPct.toFixed(1)}%${state.mode === 'auto' ? ` (intentos: ${attempts})` : ''}`,
+          'success'
+        );
+      } else {
+        toast(
+          state.mode === 'auto'
+            ? getUnresolvableMessage(results, attempts, ng, nm)
+            : `⚠ Reparto con desequilibrio — CV: ${results.cvPct.toFixed(1)}%`,
+          'warning'
+        );
+      }
+    }
+    scheduleSupabaseAutoSave();
+  } finally {
+    if (optimizeBtn) optimizeBtn.disabled = false;
   }
-  scheduleSupabaseAutoSave();
 }
 
 /* ------------------------------------------------------------------ */
@@ -3038,17 +3459,20 @@ function exportCSV() {
   if (!state.results) { toast('Primero optimiza el reparto', 'error'); return; }
 
   const rows = [
-    ['Grupo','Máquina','Costo Base','Costo Transporte','Costo Total',
-     'Núm Personas','Costo por Persona','Desviación $','Desviación %','Miembros']
+    ['Grupo','Máquina','Valor Máquina','Costo Transporte','Valor Neto',
+     'Núm Personas','Ingreso Bruto/Persona','Inversión/Persona','Ganancia Neta/Persona',
+     'Desviación $','Desviación %','Miembros']
   ];
   state.results.groupStats.forEach(s => {
     rows.push([
       s.group.name,
       s.machine.name,
-      s.machine.baseCost,
-      s.machine.transportCost,
-      s.total.toFixed(2),
+      s.machine.baseCost.toFixed(2),
+      s.transport.toFixed(2),
+      s.netValue.toFixed(2),
       s.size,
+      s.grossPerPerson.toFixed(2),
+      s.investPerPerson.toFixed(2),
       s.cpp.toFixed(2),
       s.deviation.toFixed(2),
       s.pctDeviation.toFixed(2) + '%',
@@ -3060,8 +3484,8 @@ function exportCSV() {
   rows.push(['RESUMEN']);
   rows.push(['Total personas', state.results.totalAllPeople]);
   rows.push(['Total grupos', state.results.groupStats.length]);
-  rows.push(['Costo total', state.results.totalAllCosts.toFixed(2)]);
-  rows.push(['Promedio global por persona', state.results.globalAvg.toFixed(2)]);
+  rows.push(['Valor neto total máquinas', state.results.totalAllCosts.toFixed(2)]);
+  rows.push(['Ganancia neta promedio/persona', state.results.globalAvg.toFixed(2)]);
   rows.push(['Desviación estándar', state.results.stdDev.toFixed(2)]);
   rows.push(['Coeficiente de variación %', state.results.cvPct.toFixed(2)]);
 
@@ -3203,6 +3627,7 @@ function exportJSON() {
       tamMax: state.config.maxGroupSize,
       tamMaxAbsoluto: state.config.absMaxGroupSize,
       toleranciaPct: state.config.tolerancePercent,
+      maxReintentos: state.config.maxOptimizeRetries,
       transporteAutomatico: state.config.autoTransport,
       tasaTransporte: state.config.transportRate
     },
@@ -3250,6 +3675,7 @@ function importConfigJSON(file) {
       if (cfg.tamMax             != null) document.getElementById('cfg-maxSize').value         = cfg.tamMax;
       if (cfg.tamMaxAbsoluto     != null) document.getElementById('cfg-absMax').value          = cfg.tamMaxAbsoluto;
       if (cfg.toleranciaPct      != null) document.getElementById('cfg-tolerance').value       = cfg.toleranciaPct;
+      if (cfg.maxReintentos      != null) document.getElementById('cfg-maxRetries').value      = cfg.maxReintentos;
       if (cfg.transporteAutomatico != null) document.getElementById('cfg-autoTransport').checked = cfg.transporteAutomatico;
       if (cfg.tasaTransporte     != null) document.getElementById('cfg-transportRate').value   = cfg.tasaTransporte;
       readConfig();
@@ -3412,7 +3838,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     scheduleSupabaseAutoSave();
   });
 
-  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance'].forEach(id => {
+  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance', 'cfg-maxRetries'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
       readConfig();
       renderGroupsPreview();
