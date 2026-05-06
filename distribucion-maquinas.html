@@ -2121,9 +2121,9 @@ function renderMachines() {
  * Los tamaños se calculan con el método Hamilton + refinamiento iterativo.
  *
  * Lógica de grupos pre-asignados:
- *  - Grupos "establecidos": fixedGroupName con tamaño ≥ minGroupSize → se mantienen tal cual.
- *  - Grupos "micro": fixedGroupName con tamaño < minGroupSize → se absorben en grupos
- *    establecidos si hay espacio (< absMaxGroupSize); de lo contrario pasan a state.unassigned.
+ *  - Todo equipo predefinido (fixedGroupName) se mantiene como bloque indivisible.
+ *  - Los bloques pueden combinarse con otros equipos o con personas libres,
+ *    pero nunca se separan sus integrantes.
  *  - Personas libres (sin grupo): se distribuyen en nuevos grupos proporcionales al costo.
  */
 function autoCreateGroups() {
@@ -2135,13 +2135,6 @@ function autoCreateGroups() {
 
   const numMachines = state.machines.length;
   const totalGroups = cfgN > 0 ? cfgN : numMachines;
-
-  // Validar que hay suficientes personas para cubrir el mínimo por grupo
-  const minRequired = totalGroups * minGroupSize;
-  if (state.people.length < minRequired) {
-    toast(`⚠ Con ${totalGroups} grupos y tamaño mínimo ${minGroupSize} se necesitan al menos ${minRequired} personas, pero solo hay ${state.people.length}. Reduce el mínimo de grupo o agrega personas.`, 'error', 8000);
-    return false;
-  }
 
   // ── Separate people into pre-assigned (fixed) and free ──────────────────
   const fixedMap = new Map(); // normalised key → { displayName, people[] }
@@ -2156,34 +2149,9 @@ function autoCreateGroups() {
     }
   });
 
-  // ── Split fixed groups: established (≥ min) vs micro (< min) ────────────
-  const allFixedEntries    = [...fixedMap.values()];
-  const establishedEntries = allFixedEntries.filter(fg => fg.people.length >= minGroupSize);
-  const microEntries       = allFixedEntries.filter(fg => fg.people.length <  minGroupSize);
-
-  // ── Absorb micro-group people into established groups (if there is room) ─
+  // Todos los equipos fijos se respetan tal cual (incluyendo equipos pequeños).
+  const establishedEntries = [...fixedMap.values()];
   state.unassigned = [];
-  for (const mg of microEntries) {
-    for (const person of mg.people) {
-      // Find the established group with the most remaining capacity
-      const target = establishedEntries
-        .filter(eg => eg.people.length < absMaxGroupSize)
-        .sort((a, b) => a.people.length - b.people.length)[0];
-      if (target) {
-        target.people.push(person);
-      } else {
-        state.unassigned.push(person);
-      }
-    }
-  }
-
-  if (microEntries.length) {
-    const absorbed = microEntries.reduce((s, m) => s + m.people.length, 0) - state.unassigned.length;
-    const msg = state.unassigned.length
-      ? `⚠ ${absorbed} persona(s) de micro-grupos absorbida(s) en equipos establecidos; ${state.unassigned.length} sin lugar → "Sin equipo".`
-      : `ℹ ${absorbed} persona(s) de micro-grupos absorbida(s) en equipos establecidos.`;
-    toast(msg, state.unassigned.length ? 'warning' : 'info');
-  }
 
   const numFixedGroups = establishedEntries.length;
   // totalGroups ya declarado arriba para la validación temprana
@@ -2556,7 +2524,10 @@ function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCo
   return { sizes, evaluation: bestEval, iterations };
 }
 
-/** Asigna máquinas con la mejor combinación hallada por findBestMachineAssignment(). */
+/**
+ * Asigna máquinas comparando tamaño de equipo vs costo de máquina:
+ * equipo más grande recibe máquina más costosa, y así sucesivamente.
+ */
 
 /**
  * Cuando hay más grupos que máquinas, fusiona los pares de grupos más pequeños
@@ -2625,16 +2596,17 @@ function assignMachinesOptimal() {
     .slice(0, n)
     .map(item => item.idx);
 
-  const gSizes = targetGroupIndices.map(idx => groups[idx].memberIds.length);
-  const mCosts = machines.map(m => totalCost(m));
-  const bestAssign = findBestMachineAssignment(gSizes, mCosts);
-  if (!bestAssign) return null;
+  const sortedMachineIndices = machines
+    .map((m, idx) => ({ idx, cost: totalCost(m) }))
+    .sort((a, b) => (b.cost - a.cost) || (a.idx - b.idx))
+    .slice(0, n)
+    .map(item => item.idx);
 
-  // Aplicar la mejor asignación encontrada
+  // Aplicar emparejamiento mayor a mayor (costo vs tamaño)
   groups.forEach(g => (g.machineId = null));
   for (let i = 0; i < n; i++) {
     const groupIdx = targetGroupIndices[i];
-    groups[groupIdx].machineId = machines[bestAssign.machineIndices[i]].id;
+    groups[groupIdx].machineId = machines[sortedMachineIndices[i]].id;
   }
 }
 
@@ -2681,8 +2653,9 @@ function removePersonFromGroup(personId) {
 /** Distribuye las personas en los grupos existentes usando tamaños proporcionales
  *  al costo de la máquina asignada a cada grupo (si la hay); en caso contrario,
  *  distribuye de forma uniforme.
- *  Las personas con equipo pre-asignado se fijan al grupo cuyo nombre coincide;
- *  las demás se distribuyen libremente. */
+ *  Las personas con equipo pre-asignado se fijan al grupo cuyo nombre coincide.
+ *  Si un equipo no encuentra coincidencia, se conserva como bloque y se combina
+ *  completo con otro grupo, sin separar integrantes. */
 function autoDistribute(options = {}) {
   const { silent = false } = options;
   readConfig();
@@ -2700,33 +2673,58 @@ function autoDistribute(options = {}) {
   const freePeople  = state.people.filter(p => !(p.fixedGroupName && p.fixedGroupName.trim()));
   const fixedPeople = state.people.filter(p =>   p.fixedGroupName && p.fixedGroupName.trim());
 
+  // Agrupar personas fijas por equipo para mover siempre como bloque indivisible.
+  const fixedTeamsMap = new Map(); // teamKey -> { displayName, people[] }
+  fixedPeople.forEach(p => {
+    const key = (p.fixedGroupName || '').trim().toLowerCase();
+    if (!fixedTeamsMap.has(key)) {
+      fixedTeamsMap.set(key, { displayName: (p.fixedGroupName || '').trim(), people: [] });
+    }
+    fixedTeamsMap.get(key).people.push(p);
+  });
+  const fixedTeams = [...fixedTeamsMap.values()];
+
   // Vaciar todos los grupos
   state.groups.forEach(g => (g.memberIds = []));
 
-  // Colocar personas fijas en el grupo que tenga el mismo nombre (sin distinción
-  // de mayúsculas). Las que no encuentren coincidencia se tratan como libres.
-  const unmatched = [];
-  fixedPeople.forEach(p => {
-    const key   = (p.fixedGroupName || '').trim().toLowerCase();
-    const group = state.groups.find(g => g.name.trim().toLowerCase() === key);
+  // Colocar equipos fijos en el grupo que tenga el mismo nombre (sin distinción
+  // de mayúsculas). También respeta alias compuestos, p.ej. "MTO + VIERNES".
+  const unmatchedTeamsMap = new Map(); // key -> { displayName, people[] }
+  fixedTeams.forEach(team => {
+    const key = team.displayName.trim().toLowerCase();
+    const group = state.groups.find(g => {
+      const name = (g.name || '').trim().toLowerCase();
+      if (name === key) return true;
+      const aliases = name.split('+').map(s => s.trim()).filter(Boolean);
+      return aliases.includes(key);
+    });
     if (group) {
-      if (!group.memberIds.includes(p.id)) group.memberIds.push(p.id);
+      const ids = team.people.map(p => p.id).filter(id => !group.memberIds.includes(id));
+      group.memberIds.push(...ids);
     } else {
-      unmatched.push(p);
+      if (!unmatchedTeamsMap.has(key)) {
+        unmatchedTeamsMap.set(key, {
+          displayName: team.displayName,
+          people: []
+        });
+      }
+      unmatchedTeamsMap.get(key).people.push(...team.people);
     }
   });
+  const unmatchedTeams = [...unmatchedTeamsMap.values()];
+  const unmatchedCount = unmatchedTeams.reduce((sum, team) => sum + team.people.length, 0);
 
-  if (!silent && unmatched.length) {
+  if (!silent && unmatchedTeams.length) {
     toast(
-      `⚠ ${unmatched.length} persona(s) con equipo pre-asignado no encontraron un grupo con ese nombre y serán distribuidas libremente.`,
+      `⚠ ${unmatchedCount} persona(s) en ${unmatchedTeams.length} equipo(s) no encontraron grupo con el mismo nombre; se combinarán como bloque.`,
       'warning'
     );
   }
 
-  // Distribuir personas libres (y las que no encontraron grupo) al resto de grupos
-  const toDistribute = [...freePeople, ...unmatched].sort(() => Math.random() - 0.5);
+  // Distribuir personas libres y, aparte, ubicar equipos no coincidentes como bloque.
+  const toDistribute = [...freePeople].sort(() => Math.random() - 0.5);
 
-  if (!toDistribute.length) {
+  if (!toDistribute.length && !unmatchedTeams.length) {
     if (!silent) {
       renderGroups();
       toast('Personas distribuidas en sus equipos pre-asignados ✔', 'success');
@@ -2734,7 +2732,7 @@ function autoDistribute(options = {}) {
     return;
   }
 
-  const total = toDistribute.length;
+  const total = toDistribute.length + unmatchedCount;
   const ng    = state.groups.length;
 
   const groupCosts  = state.groups.map(g => {
@@ -2772,6 +2770,30 @@ function autoDistribute(options = {}) {
   );
   const targetTotals = optimized.sizes;
 
+  // 1) Ubicar equipos no coincidentes como bloques indivisibles.
+  const unmatchedTeamsShuffled = [...unmatchedTeams].sort(() => Math.random() - 0.5);
+  unmatchedTeamsShuffled
+    .sort((a, b) => b.people.length - a.people.length)
+    .forEach(team => {
+      const teamSize = team.people.length;
+      const candidates = state.groups
+        .map((g, i) => {
+          const target = targetTotals[i] || g.memberIds.length;
+          return { i, remaining: target - g.memberIds.length };
+        })
+        .sort((a, b) => b.remaining - a.remaining);
+
+      // Preferir grupos donde el bloque sí quepa; elegir el de mejor encaje.
+      const fitting = candidates
+        .filter(c => c.remaining >= teamSize)
+        .sort((a, b) => (a.remaining - teamSize) - (b.remaining - teamSize));
+
+      const selected = fitting.length ? fitting[0] : candidates[0];
+      const targetGroup = state.groups[selected.i];
+      targetGroup.memberIds.push(...team.people.map(p => p.id));
+    });
+
+  // 2) Completar con personas libres.
   let idx = 0;
   state.groups.forEach((g, i) => {
     const extra = Math.max(0, (targetTotals[i] || g.memberIds.length) - g.memberIds.length);
@@ -3026,6 +3048,12 @@ function renderResults(res) {
     ? `<div class="alert alert-success">✅ Reparto justo — todos los grupos ganan al menos el mínimo aceptable. Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong> (tolerancia: ${state.config.tolerancePercent}%)</div>`
     : `<div class="alert alert-warning">⚠️ ${numUnder} grupo(s) ganan por debajo del mínimo aceptable (−${state.config.tolerancePercent}% del promedio). Coef. de variación: <strong>${res.cvPct.toFixed(1)}%</strong></div>`;
 
+  const rankingHtml = `
+    <div class="alert alert-info">
+      🔎 Ranking aplicado: se ordenan las máquinas por <strong>costo total</strong> y los equipos por
+      <strong>número de integrantes</strong>, emparejando de mayor a mayor.
+    </div>`;
+
   /* Cajas de métricas */
   const statsHtml = `
     <div class="stats-row">
@@ -3129,7 +3157,7 @@ function renderResults(res) {
         </div>`).join('')
     : '';
 
-  container.innerHTML = alertHtml + statsHtml + warningsHtml + tableHtml + cardsHtml;
+  container.innerHTML = alertHtml + rankingHtml + statsHtml + warningsHtml + tableHtml + cardsHtml;
 
   /* Sección "Sin equipo" — personas que no pudieron ser asignadas */
   if (state.unassigned && state.unassigned.length > 0) {
@@ -3138,8 +3166,8 @@ function renderResults(res) {
     div.innerHTML = `
       <h3>🚫 Sin equipo (${state.unassigned.length})</h3>
       <p class="unassigned-desc">
-        Estas personas pertenecían a grupos muy pequeños (micro-grupos) que no pudieron
-        ser absorbidos por ningún equipo establecido — todos estaban al límite de capacidad.
+        Estas personas no pudieron asignarse automáticamente respetando la regla
+        de no deshacer equipos y los límites de capacidad configurados.
       </p>
       <div class="unassigned-chips">
         ${state.unassigned.map(p => `<span class="unassigned-chip">${esc(p.name)}</span>`).join('')}
@@ -3188,15 +3216,13 @@ async function loadFromServer() {
 
 /**
  * Muestra (en la pestaña Personas) los grupos detectados en la lista cargada.
- * Resalta el primer equipo predefinido y advierte sobre micro-grupos.
+ * Resalta el primer equipo predefinido.
  */
 function renderGroupsPreview() {
   const previewEl = document.getElementById('groups-preview');
   if (!previewEl) return;
 
   if (!state.people.length) { previewEl.style.display = 'none'; return; }
-
-  const minSize = state.config.minGroupSize || Math.max(1, parseInt(document.getElementById('cfg-minSize').value) || 3);
 
   // Build group map from current people
   const groupMap = new Map();
@@ -3214,25 +3240,18 @@ function renderGroupsPreview() {
   const entries = [...groupMap.values()];
   if (!entries.length) { previewEl.style.display = 'none'; return; }
 
-  const establishedEntries = entries.filter(e => e.count >= minSize);
-  const microEntries       = entries.filter(e => e.count <  minSize);
-
-  // Build chip list: established groups first (first one highlighted), then micro
-  const chips = [
-    ...establishedEntries.map((fg, i) => {
+  // Build chip list: all fixed teams preserved as-is (first one highlighted)
+  const chips = entries
+    .sort((a, b) => b.count - a.count)
+    .map((fg, i) => {
       const isFirst = i === 0;
       const cls     = isFirst ? 'preview-group-chip first-group' : 'preview-group-chip';
       const icon    = isFirst ? '⭐ ' : '';
       const tip     = isFirst
         ? 'Primer equipo predefinido seleccionado'
-        : 'Equipo predefinido establecido';
+        : 'Equipo predefinido';
       return `<span class="${cls}" title="${tip}">${icon}${esc(fg.displayName)} <strong>(${fg.count})</strong></span>`;
-    }),
-    ...microEntries.map(fg => {
-      const tip = `Micro-grupo: ${fg.count} persona(s) — se absorberán en equipos establecidos si hay espacio`;
-      return `<span class="preview-group-chip micro-group" title="${tip}">⚠ ${esc(fg.displayName)} <strong>(${fg.count})</strong></span>`;
-    })
-  ];
+    });
 
   document.getElementById('preview-groups-list').innerHTML = chips.join('');
 
@@ -3379,8 +3398,14 @@ async function optimize() {
         // Partir siempre del mejor estado conocido para que cada iteración mejore sobre la anterior
         if (bestSnapshot) applyGroupStateSnapshot(bestSnapshot);
 
+        // Refinar en ciclo corto para evitar asignaciones desfasadas:
+        // al cambiar tamaños durante la distribución, se vuelve a asignar.
         assignMachinesOptimal();
         autoDistribute({ silent: true });
+        assignMachinesOptimal();
+        autoDistribute({ silent: true });
+        // Última pasada: asegurar cierre final mayor-a-mayor con tamaños actuales.
+        assignMachinesOptimal();
 
         const candidate = calculateResults();
         if (!candidate) break;
@@ -3746,7 +3771,7 @@ function updateBadges() {
 
 function loadSampleData(options = {}) {
   const { silent = false, skipAutoSave = false } = options;
-  /* 52 personas — 8 con equipo establecido, 3 en micro-grupos, 41 libres */
+  /* 52 personas — 11 con equipo predefinido (incluye equipos pequeños), 41 libres */
   const people = [
     { name: 'Ana García',           fixedGroupName: 'Equipo Alpha' },
     { name: 'Carlos López',         fixedGroupName: 'Equipo Alpha' },
@@ -3756,7 +3781,7 @@ function loadSampleData(options = {}) {
     { name: 'Miguel Rodríguez',     fixedGroupName: 'Equipo Beta'  },
     { name: 'Sofía Pérez',          fixedGroupName: 'Equipo Beta'  },
     { name: 'David Sánchez',        fixedGroupName: 'Equipo Beta'  },
-    // Micro-grupos (< minGroupSize=3) → se absorben en equipos establecidos si hay espacio
+    // Equipos pequeños también se mantienen como bloque (no se deshacen)
     { name: 'Tomás Peña',           fixedGroupName: 'Equipo Nano'  },
     { name: 'Estela Méndez',        fixedGroupName: 'Equipo Nano'  },
     { name: 'Víctor Barrera',       fixedGroupName: 'Solo Equipo'  },
@@ -3802,7 +3827,7 @@ function loadSampleData(options = {}) {
   updateBadges();
   if (!skipAutoSave) scheduleSupabaseAutoSave();
   if (!silent) {
-    toast('✅ Datos de ejemplo: 52 personas (8 establecidos · 3 micro-grupos · 41 libres) · 8 máquinas', 'success');
+    toast('✅ Datos de ejemplo: 52 personas (11 con equipo predefinido · 41 libres) · 8 máquinas', 'success');
   }
 }
 
