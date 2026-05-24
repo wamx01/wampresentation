@@ -3075,25 +3075,20 @@ function calculateResults() {
 function buildBalanceDiagnostics(results) {
   if (!results || !Array.isArray(results.groupStats) || !(results.globalAvg > 0)) return [];
 
-  return results.groupStats.map(stat => {
+  const freePoolCount = Array.isArray(state.unassigned) ? state.unassigned.length : 0;
+
+  const diagnostics = results.groupStats.map(stat => {
     const idealCost = stat.size * results.globalAvg;
     const idealSize = stat.netValue / results.globalAvg;
     const costGap = idealCost - stat.netValue;
     const sizeGap = idealSize - stat.size;
     const needsPeople = Math.abs(sizeGap) >= 0.75;
-
-    let suggestion;
-    if (needsPeople) {
-      suggestion = sizeGap > 0
-        ? `Agregar ~${sizeGap.toFixed(1)} persona(s)`
-        : `Quitar ~${Math.abs(sizeGap).toFixed(1)} persona(s)`;
-    } else if (Math.abs(costGap) >= 1) {
-      suggestion = costGap > 0
-        ? `Subir costo ~${fmt(Math.abs(costGap))}`
-        : `Bajar costo ~${fmt(Math.abs(costGap))}`;
-    } else {
-      suggestion = 'Sin ajuste relevante';
-    }
+    const movableMembers = stat.members.filter(p => !normalizeTeamName(p.fixedGroupName)).length;
+    const fixedTeams = [...new Set(
+      stat.members
+        .map(p => normalizeTeamName(p.fixedGroupName))
+        .filter(Boolean)
+    )];
 
     return {
       ...stat,
@@ -3101,8 +3096,68 @@ function buildBalanceDiagnostics(results) {
       idealSize,
       costGap,
       sizeGap,
-      suggestion,
-      needsPeople
+      needsPeople,
+      movableMembers,
+      fixedTeams
+    };
+  });
+
+  return diagnostics.map(stat => {
+    const roundedPeopleGap = Math.max(1, Math.round(Math.abs(stat.sizeGap)));
+    const preferredReceiver = diagnostics
+      .filter(other => other.group.id !== stat.group.id && other.sizeGap > 0.75)
+      .sort((a, b) => b.sizeGap - a.sizeGap || b.pctDeviation - a.pctDeviation)[0];
+    const preferredDonor = diagnostics
+      .filter(other => other.group.id !== stat.group.id && other.sizeGap < -0.75)
+      .sort((a, b) => a.sizeGap - b.sizeGap || a.pctDeviation - b.pctDeviation)[0];
+    const machineUpgradeCandidate = diagnostics
+      .filter(other => other.group.id !== stat.group.id && other.netValue > stat.netValue)
+      .sort((a, b) => Math.abs(a.netValue - stat.idealCost) - Math.abs(b.netValue - stat.idealCost))[0];
+    const machineDowngradeCandidate = diagnostics
+      .filter(other => other.group.id !== stat.group.id && other.netValue < stat.netValue)
+      .sort((a, b) => Math.abs(a.netValue - stat.idealCost) - Math.abs(b.netValue - stat.idealCost))[0];
+
+    const actions = [];
+    if (stat.sizeGap <= -0.75) {
+      if (preferredReceiver) {
+        actions.push(`Mover ~${roundedPeopleGap} persona(s) hacia ${preferredReceiver.group.name}`);
+      } else {
+        actions.push(`Quitar ~${roundedPeopleGap} persona(s) de este grupo`);
+      }
+    }
+
+    if (stat.sizeGap >= 0.75) {
+      if (freePoolCount > 0) {
+        actions.push(`Agregar hasta ${Math.min(freePoolCount, roundedPeopleGap)} persona(s) sin equipo`);
+      } else if (preferredDonor) {
+        actions.push(`Recibir ~${roundedPeopleGap} persona(s) desde ${preferredDonor.group.name}`);
+      } else {
+        actions.push(`Agregar ~${roundedPeopleGap} persona(s) a este grupo`);
+      }
+    }
+
+    if (stat.costGap > 1 && machineUpgradeCandidate) {
+      actions.push(`Probar cambio de máquina con ${machineUpgradeCandidate.group.name}`);
+    }
+    if (stat.costGap < -1 && machineDowngradeCandidate) {
+      actions.push(`Probar cambio de máquina con ${machineDowngradeCandidate.group.name}`);
+    }
+
+    if (!stat.movableMembers && stat.fixedTeams.length && Math.abs(stat.sizeGap) >= 0.75) {
+      actions.push(
+        stat.fixedTeams.length === 1
+          ? `Último recurso: deshacer el equipo fijo ${stat.fixedTeams[0]}`
+          : 'Último recurso: deshacer uno de los equipos fijos de este grupo'
+      );
+    }
+
+    let suggestion = actions[0] || 'Sin ajuste relevante';
+    if (actions.length > 1) suggestion = `${actions[0]} | ${actions[1]}`;
+
+    return {
+      ...stat,
+      actions,
+      suggestion
     };
   }).sort((a, b) => Math.abs(b.pctDeviation) - Math.abs(a.pctDeviation));
 }
@@ -3135,6 +3190,7 @@ function renderResults(res) {
       <strong>número de integrantes</strong>, emparejando de mayor a mayor.
     </div>`;
   const diagnostics = buildBalanceDiagnostics(res);
+  const diagnosticByGroupId = new Map(diagnostics.map(d => [d.group.id, d]));
 
   /* Cajas de métricas */
   const statsHtml = `
@@ -3268,7 +3324,7 @@ function renderResults(res) {
         <div class="alert alert-warning">
           ⚠ <strong>${esc(s.group.name)}</strong> (${esc(s.machine.name)}):
           ganancia/persona ${fmt(s.cpp)} está un ${Math.abs(s.pctDeviation).toFixed(1)}%
-          por debajo del promedio (${fmt(res.globalAvg)}). Considera mover personas a este grupo.
+          por debajo del promedio (${fmt(res.globalAvg)}). ${esc((diagnosticByGroupId.get(s.group.id)?.suggestion) || 'Considera quitar personas de este grupo o asignarle una máquina de mayor valor neto.')}
         </div>`).join('')
     : '';
 
@@ -3412,6 +3468,35 @@ function applyGroupStateSnapshot(snapshot) {
   });
 }
 
+function applyGuidedRetryPerturbation(results) {
+  if (!results || !Array.isArray(results.groupStats) || state.groups.length < 2) return false;
+
+  const diagnostics = buildBalanceDiagnostics(results);
+  const donorDiag = diagnostics
+    .filter(d => d.sizeGap <= -0.75 && d.movableMembers > 0)
+    .sort((a, b) => a.sizeGap - b.sizeGap || a.pctDeviation - b.pctDeviation)[0];
+  const receiverDiag = diagnostics
+    .filter(d => d.group.id !== donorDiag?.group.id && d.sizeGap >= 0.75)
+    .sort((a, b) => b.sizeGap - a.sizeGap || b.pctDeviation - a.pctDeviation)[0];
+
+  if (!donorDiag || !receiverDiag) return false;
+
+  const donorGroup = state.groups.find(g => g.id === donorDiag.group.id);
+  const receiverGroup = state.groups.find(g => g.id === receiverDiag.group.id);
+  if (!donorGroup || !receiverGroup) return false;
+
+  const movableMemberId = donorGroup.memberIds.find(memberId => {
+    const person = state.people.find(p => p.id === memberId);
+    return person && !normalizeTeamName(person.fixedGroupName);
+  });
+
+  if (!movableMemberId) return false;
+
+  donorGroup.memberIds = donorGroup.memberIds.filter(id => id !== movableMemberId);
+  if (!receiverGroup.memberIds.includes(movableMemberId)) receiverGroup.memberIds.push(movableMemberId);
+  return true;
+}
+
 function updateOptimizeProgress({ running = false, warning = false, success = false, attempt = 0, total = 0, text = '' } = {}) {
   const panel = document.getElementById('opt-progress');
   const iterEl = document.getElementById('opt-progress-iter');
@@ -3438,20 +3523,20 @@ function updateOptimizeProgress({ running = false, warning = false, success = fa
 function getStructuralImbalanceHints(results) {
   if (!results || !Array.isArray(results.groupStats) || !(results.globalAvg > 0)) return '';
 
-  const worstUnder = results.groupStats
+  const worstUnder = buildBalanceDiagnostics(results)
     .filter(g => g.isUnder)
     .sort((a, b) => a.pctDeviation - b.pctDeviation)
     .slice(0, 2)
     .map(g => {
-      const idealCost = g.size * results.globalAvg;
-      const idealSize = g.netValue / results.globalAvg;
-      const sizeGap = idealSize - g.size;
-
-      if (Math.abs(sizeGap) >= 0.75) {
-        return `"${g.group.name}" requeriría ~${idealSize.toFixed(1)} persona(s) para que la máquina actual quede cerca del promedio`;
+      if (g.actions && g.actions.length) {
+        return `"${g.group.name}": ${g.actions.slice(0, 2).join(' o ')}`;
       }
 
-      return `"${g.group.name}" requeriría una máquina de ~${fmt(idealCost)} en vez de ${fmt(g.netValue)}`;
+      if (Math.abs(g.sizeGap) >= 0.75) {
+        return `"${g.group.name}" requeriría ~${g.idealSize.toFixed(1)} persona(s) para que la máquina actual quede cerca del promedio`;
+      }
+
+      return `"${g.group.name}" requeriría una máquina de ~${fmt(g.idealCost)} en vez de ${fmt(g.netValue)}`;
     });
 
   return worstUnder.length ? ` Bloqueos principales: ${worstUnder.join('; ')}.` : '';
@@ -3534,7 +3619,10 @@ async function optimize() {
         await nextUiTick();
 
         // Partir siempre del mejor estado conocido para que cada iteración mejore sobre la anterior
-        if (bestSnapshot) applyGroupStateSnapshot(bestSnapshot);
+        if (bestSnapshot) {
+          applyGroupStateSnapshot(bestSnapshot);
+          if (attempt > 1 && bestResults) applyGuidedRetryPerturbation(bestResults);
+        }
 
         // Refinar en ciclo corto para evitar asignaciones desfasadas:
         // al cambiar tamaños durante la distribución, se vuelve a asignar.
