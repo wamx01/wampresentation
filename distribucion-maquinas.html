@@ -82,6 +82,23 @@
     .card-head h2 {
       margin-bottom: 0;
     }
+    .edit-lock-meta {
+      display: inline-flex;
+      align-items: center;
+      gap: .5rem;
+      flex-wrap: wrap;
+    }
+    .edit-lock-status {
+      font-size: .78rem;
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .edit-lock-status.unlocked {
+      color: var(--success);
+    }
+    .edit-lock-status.locked {
+      color: var(--warning);
+    }
 
     /* ===== Tabs ===== */
     .tabs {
@@ -858,7 +875,13 @@
        PANEL DE CONFIGURACIÓN
        ================================================================== -->
   <div class="card">
-    <h2>⚙️ Configuración</h2>
+    <div class="card-head">
+      <h2>⚙️ Configuración</h2>
+      <div class="edit-lock-meta">
+        <span class="edit-lock-status locked" id="edit-lock-status">🔒 Edición bloqueada</span>
+        <button class="btn btn-secondary" id="btn-toggle-edit-lock">🔐 Desbloquear edición</button>
+      </div>
+    </div>
     <div class="config-grid">
 
       <div class="form-group">
@@ -1292,6 +1315,7 @@ function downloadFile(name, content, mime) {
 const SUPABASE_SETTINGS_KEY = 'machine-distribution-supabase-settings';
 const SUPABASE_SNAPSHOT_TABLE = 'machine_distribution_snapshots';
 const SUPABASE_PANEL_UNLOCK_KEY = 'supabase-panel-unlocked';
+const PEOPLE_GROUPS_UNLOCK_KEY = 'people-groups-edit-unlocked';
 // Nota: esto solo oculta la UI; no es seguridad real porque vive en cliente.
 const SUPABASE_CONFIG_PASSWORD = 'Arzmec_2026';
 const DEFAULT_SUPABASE_SETTINGS = {
@@ -1457,6 +1481,81 @@ function toggleSupabasePanel() {
   } else {
     unlockSupabasePanel();
   }
+}
+
+function isPeopleGroupsEditingUnlocked() {
+  try {
+    return sessionStorage.getItem(PEOPLE_GROUPS_UNLOCK_KEY) === '1';
+  } catch (_) {
+    return false;
+  }
+}
+
+function setPeopleGroupsEditingUnlocked(unlocked, options = {}) {
+  const { silent = false } = options;
+  try {
+    if (unlocked) {
+      sessionStorage.setItem(PEOPLE_GROUPS_UNLOCK_KEY, '1');
+    } else {
+      sessionStorage.removeItem(PEOPLE_GROUPS_UNLOCK_KEY);
+    }
+  } catch (_) {
+    // Ignorar si el navegador bloquea sessionStorage.
+  }
+
+  refreshEditLockButton();
+
+  if (!silent) {
+    toast(
+      unlocked
+        ? 'Edicion de personas y grupos desbloqueada'
+        : 'Edicion de personas y grupos bloqueada',
+      unlocked ? 'success' : 'info'
+    );
+  }
+}
+
+function ensurePeopleGroupsEditAccess(actionLabel = 'modificar personas o grupos') {
+  if (isPeopleGroupsEditingUnlocked()) return true;
+
+  const pwd = prompt(`Ingresa la contrasena para ${actionLabel}:`);
+  if (pwd == null) {
+    toast('Accion cancelada', 'info');
+    return false;
+  }
+  if (pwd === SUPABASE_CONFIG_PASSWORD) {
+    setPeopleGroupsEditingUnlocked(true);
+    return true;
+  }
+
+  toast('Contrasena incorrecta', 'error');
+  return false;
+}
+
+function refreshEditLockButton() {
+  const btn = document.getElementById('btn-toggle-edit-lock');
+  const status = document.getElementById('edit-lock-status');
+  const unlocked = isPeopleGroupsEditingUnlocked();
+
+  if (btn) {
+    btn.textContent = unlocked ? '🔒 Bloquear edición' : '🔐 Desbloquear edición';
+    btn.title = unlocked ? 'Bloquear cambios de personas, grupos, máquinas y configuración' : 'Desbloquear cambios de personas, grupos, máquinas y configuración';
+    btn.setAttribute('aria-label', btn.title);
+  }
+
+  if (status) {
+    status.textContent = unlocked ? '🔓 Edición desbloqueada' : '🔒 Edición bloqueada';
+    status.classList.toggle('unlocked', unlocked);
+    status.classList.toggle('locked', !unlocked);
+  }
+}
+
+function togglePeopleGroupsEditingLock() {
+  if (isPeopleGroupsEditingUnlocked()) {
+    setPeopleGroupsEditingUnlocked(false);
+    return;
+  }
+  ensurePeopleGroupsEditAccess('desbloquear la edicion');
 }
 
 function withAutoSaveSuspended(fn) {
@@ -1821,6 +1920,7 @@ function totalCost(machine) {
 /* ------------------------------------------------------------------ */
 
 function addPerson(name, fixedGroupName) {
+  if (!ensurePeopleGroupsEditAccess('agregar personas')) return false;
   name = name.trim();
   if (!name) return false;
   if (state.people.some(p => p.name.toLowerCase() === name.toLowerCase())) {
@@ -1835,6 +1935,7 @@ function addPerson(name, fixedGroupName) {
 }
 
 function removePerson(id) {
+  if (!ensurePeopleGroupsEditAccess('quitar personas')) return;
   const person = state.people.find(p => p.id === id);
   if (!person) return;
 
@@ -1854,6 +1955,10 @@ function removePerson(id) {
 }
 
 function setPersonTeam(id, teamName) {
+  if (!ensurePeopleGroupsEditAccess('cambiar el equipo de una persona')) {
+    renderPeople();
+    return;
+  }
   const p = state.people.find(p => p.id === id);
   if (p) {
     p.fixedGroupName = normalizeTeamName(teamName);
@@ -2048,6 +2153,7 @@ function setTeamFilter(team) {
 /* ------------------------------------------------------------------ */
 
 function addMachine(name, baseCost, transportCost) {
+  if (!ensurePeopleGroupsEditAccess('agregar maquinas')) return false;
   name = name.trim();
   if (!name) { toast('El nombre de la máquina no puede estar vacío', 'error'); return false; }
   if (isNaN(baseCost) || baseCost < 0) { toast('El valor de la máquina debe ser un número positivo', 'error'); return false; }
@@ -2068,6 +2174,7 @@ function addMachine(name, baseCost, transportCost) {
 }
 
 function removeMachine(id) {
+  if (!ensurePeopleGroupsEditAccess('eliminar maquinas')) return;
   state.machines = state.machines.filter(m => m.id !== id);
   state.groups.forEach(g => { if (g.machineId === id) g.machineId = null; });
   renderMachines();
@@ -2076,6 +2183,10 @@ function removeMachine(id) {
 }
 
 function editMachineField(id, field, rawValue) {
+  if (!ensurePeopleGroupsEditAccess('editar maquinas')) {
+    renderMachines();
+    return;
+  }
   const m = state.machines.find(m => m.id === id);
   if (!m) return;
   if (field === 'name') {
@@ -2588,6 +2699,7 @@ function assignMachinesOptimal() {
 /* --- CRUD manual de grupos --- */
 
 function addGroup() {
+  if (!ensurePeopleGroupsEditAccess('agregar grupos')) return;
   state.groups.push({
     id: uid(), name: `Grupo ${state.groups.length + 1}`, memberIds: [], machineId: null, targetSize: null
   });
@@ -2597,6 +2709,7 @@ function addGroup() {
 }
 
 function removeGroup(id) {
+  if (!ensurePeopleGroupsEditAccess('eliminar grupos')) return;
   state.groups = state.groups.filter(g => g.id !== id);
   renderGroups();
   updateBadges();
@@ -2604,6 +2717,10 @@ function removeGroup(id) {
 }
 
 function renameGroup(id, name) {
+  if (!ensurePeopleGroupsEditAccess('renombrar grupos')) {
+    renderGroups();
+    return;
+  }
   const g = state.groups.find(g => g.id === id);
   if (g && name.trim()) {
     g.name = name.trim();
@@ -2612,6 +2729,10 @@ function renameGroup(id, name) {
 }
 
 function assignMachineManual(groupId, machineId) {
+  if (!ensurePeopleGroupsEditAccess('cambiar la maquina de un grupo')) {
+    renderGroups();
+    return;
+  }
   // Quitar la misma máquina de cualquier otro grupo para evitar duplicados
   state.groups.forEach(g => { if (g.machineId === machineId) g.machineId = null; });
   const g = state.groups.find(g => g.id === groupId);
@@ -2620,6 +2741,7 @@ function assignMachineManual(groupId, machineId) {
 }
 
 function removePersonFromGroup(personId) {
+  if (!ensurePeopleGroupsEditAccess('quitar personas de un grupo')) return;
   state.groups.forEach(g => { g.memberIds = g.memberIds.filter(id => id !== personId); });
   renderGroups();
   scheduleSupabaseAutoSave();
@@ -2633,6 +2755,7 @@ function removePersonFromGroup(personId) {
  *  completo con otro grupo, sin separar integrantes. */
 function autoDistribute(options = {}) {
   const { silent = false, targetTotalsOverride = null } = options;
+  if (!silent && !ensurePeopleGroupsEditAccess('redistribuir personas entre grupos')) return;
   readConfig();
   const { absMaxGroupSize } = state.config;
   if (!state.groups.length) {
@@ -2917,6 +3040,11 @@ function chipHtml(p) {
 let _dragId = null;
 
 function onDragStart(ev, personId) {
+  if (!ensurePeopleGroupsEditAccess('mover personas entre grupos')) {
+    _dragId = null;
+    ev.preventDefault();
+    return;
+  }
   _dragId = personId;
   ev.dataTransfer.effectAllowed = 'move';
 }
@@ -2935,6 +3063,11 @@ function onDrop(ev, target) {
   ev.preventDefault();
   ev.currentTarget.classList.remove('drag-over');
   if (_dragId == null) return;
+  if (!ensurePeopleGroupsEditAccess('mover personas entre grupos')) {
+    _dragId = null;
+    renderGroups();
+    return;
+  }
 
   // Quitar de todos los grupos
   state.groups.forEach(g => { g.memberIds = g.memberIds.filter(id => id !== _dragId); });
@@ -3892,6 +4025,7 @@ function exportJSON() {
 }
 
 function importConfigJSON(file) {
+  if (!ensurePeopleGroupsEditAccess('importar personas y grupos')) return;
   if (!file) return;
   const reader = new FileReader();
   reader.onload = e => {
@@ -3990,7 +4124,8 @@ function updateBadges() {
 /* ------------------------------------------------------------------ */
 
 function loadSampleData(options = {}) {
-  const { silent = false, skipAutoSave = false } = options;
+  const { silent = false, skipAutoSave = false, bypassProtection = false } = options;
+  if (!bypassProtection && !ensurePeopleGroupsEditAccess('cargar personas y grupos de ejemplo')) return;
   /* 52 personas — 11 con equipo predefinido (incluye equipos pequeños), 41 libres */
   const people = [
     { name: 'Ana García',           fixedGroupName: 'Equipo Alpha' },
@@ -4057,6 +4192,9 @@ function loadSampleData(options = {}) {
 
 document.addEventListener('DOMContentLoaded', async () => {
 
+  refreshEditLockButton();
+  document.getElementById('btn-toggle-edit-lock').addEventListener('click', togglePeopleGroupsEditingLock);
+
   /* --- Tabs --- */
   document.querySelectorAll('.tab-btn').forEach(btn => {
     btn.addEventListener('click', () => switchTab(btn.dataset.tab));
@@ -4064,6 +4202,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Modo (auto / manual) --- */
   document.getElementById('cfg-mode').addEventListener('change', e => {
+    if (!ensurePeopleGroupsEditAccess('cambiar la configuracion')) {
+      syncConfigToDom();
+      return;
+    }
     state.mode = e.target.value;
     document.getElementById('grupos-auto-panel').style.display   = state.mode === 'auto'   ? '' : 'none';
     document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
@@ -4073,11 +4215,19 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Config: transporte automático --- */
   document.getElementById('cfg-autoTransport').addEventListener('change', () => {
+    if (!ensurePeopleGroupsEditAccess('cambiar la configuracion')) {
+      syncConfigToDom();
+      return;
+    }
     readConfig();
     renderMachines();
     scheduleSupabaseAutoSave();
   });
   document.getElementById('cfg-transportRate').addEventListener('change', () => {
+    if (!ensurePeopleGroupsEditAccess('cambiar la configuracion')) {
+      syncConfigToDom();
+      return;
+    }
     readConfig();
     renderMachines();
     scheduleSupabaseAutoSave();
@@ -4085,6 +4235,10 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance', 'cfg-maxRetries'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
+      if (!ensurePeopleGroupsEditAccess('cambiar la configuracion')) {
+        syncConfigToDom();
+        return;
+      }
       readConfig();
       renderGroupsPreview();
       scheduleSupabaseAutoSave();
@@ -4107,6 +4261,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Personas: pegar lista --- */
   document.getElementById('btn-paste-people').addEventListener('click', () => {
+    if (!ensurePeopleGroupsEditAccess('importar personas')) return;
     const lines = document.getElementById('inp-paste').value
       .split('\n')
       .map(l => l.trim())
@@ -4130,7 +4285,10 @@ document.addEventListener('DOMContentLoaded', async () => {
   });
 
   /* --- Personas: cargar desde servidor --- */
-  document.getElementById('btn-load-server').addEventListener('click', loadFromServer);
+  document.getElementById('btn-load-server').addEventListener('click', () => {
+    if (!ensurePeopleGroupsEditAccess('cargar personas desde el servidor')) return;
+    loadFromServer();
+  });
 
   /* --- Máquinas: agregar --- */
   const inpMachineName = document.getElementById('inp-machine-name');
@@ -4213,7 +4371,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     loadedFromCloud = await loadSnapshotFromSupabase({ silent: true });
   }
   if (!loadedFromCloud) {
-    loadSampleData({ silent: false, skipAutoSave: true });
+    loadSampleData({ silent: false, skipAutoSave: true, bypassProtection: true });
   }
 
   updateBadges();
