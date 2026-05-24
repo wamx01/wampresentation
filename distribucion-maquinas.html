@@ -1479,6 +1479,7 @@ const FLOATING_POINT_EPSILON = 1e-9;
 const MAX_GROUPS_FOR_EXHAUSTIVE_SEARCH = 8;
 const MAX_MACHINES_FOR_EXHAUSTIVE_SEARCH = 10;
 const MAX_SIZE_OPTIMIZATION_ITERATIONS = 250;
+const MAX_MACHINE_ASSIGNMENT_SWAP_PASSES = 200;
 const DEFAULT_MAX_OPTIMIZE_RETRIES = 3;
 
 /** Lee la configuración del DOM hacia state.config */
@@ -2424,6 +2425,55 @@ function compareAssignments(candidate, current) {
   return candidate.variance - current.variance;
 }
 
+function buildGreedyMachineAssignment(groupSizes, machineCosts) {
+  const n = Math.min(groupSizes.length, machineCosts.length);
+  if (!n) return [];
+
+  const sortedMachineIdx = machineCosts
+    .map((cost, idx) => ({ cost, idx }))
+    .sort((a, b) => (b.cost - a.cost) || (a.idx - b.idx))
+    .slice(0, n)
+    .map(item => item.idx);
+
+  const sortedGroupIdx = groupSizes
+    .map((size, idx) => ({ size, idx }))
+    .sort((a, b) => (b.size - a.size) || (a.idx - b.idx))
+    .slice(0, n)
+    .map(item => item.idx);
+
+  const assignment = new Array(n);
+  for (let i = 0; i < n; i++) assignment[sortedGroupIdx[i]] = sortedMachineIdx[i];
+  return assignment;
+}
+
+function refineMachineAssignmentBySwaps(groupSizes, machineCosts, initialAssignment, tolerancePercent) {
+  if (!Array.isArray(initialAssignment) || !initialAssignment.length) return null;
+
+  let best = evaluateMachineAssignment(groupSizes, initialAssignment, machineCosts, tolerancePercent);
+  let improved = true;
+  let pass = 0;
+
+  while (improved && pass < MAX_MACHINE_ASSIGNMENT_SWAP_PASSES) {
+    improved = false;
+    pass++;
+
+    for (let i = 0; i < initialAssignment.length; i++) {
+      for (let j = i + 1; j < initialAssignment.length; j++) {
+        const candidateAssignment = [...best.machineIndices];
+        [candidateAssignment[i], candidateAssignment[j]] = [candidateAssignment[j], candidateAssignment[i]];
+
+        const candidate = evaluateMachineAssignment(groupSizes, candidateAssignment, machineCosts, tolerancePercent);
+        if (compareAssignments(candidate, best) < 0) {
+          best = candidate;
+          improved = true;
+        }
+      }
+    }
+  }
+
+  return best;
+}
+
 /**
  * Busca la mejor asignación de máquinas posible para los tamaños indicados.
  * Usa búsqueda exacta para casos pequeños y greedy para los grandes.
@@ -2457,20 +2507,9 @@ function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent) {
 
     search([]);
   } else {
-    const sortedMachineIdx = machineCosts
-      .map((cost, idx) => ({ cost, idx }))
-      .sort((a, b) => b.cost - a.cost)
-      .slice(0, n)
-      .map(item => item.idx);
-
-    const sortedGroupIdx = activeSizes
-      .map((size, idx) => ({ size, idx }))
-      .sort((a, b) => b.size - a.size)
-      .map(item => item.idx);
-
-    const assignment = new Array(n);
-    for (let i = 0; i < n; i++) assignment[sortedGroupIdx[i]] = sortedMachineIdx[i];
-    best = evaluateMachineAssignment(activeSizes, assignment, machineCosts, tolerance);
+    const greedyAssignment = buildGreedyMachineAssignment(activeSizes, machineCosts);
+    best = refineMachineAssignmentBySwaps(activeSizes, machineCosts, greedyAssignment, tolerance)
+      || evaluateMachineAssignment(activeSizes, greedyAssignment, machineCosts, tolerance);
   }
 
   return best;
@@ -2596,17 +2635,24 @@ function assignMachinesOptimal() {
     .slice(0, n)
     .map(item => item.idx);
 
-  const sortedMachineIndices = machines
-    .map((m, idx) => ({ idx, cost: totalCost(m) }))
-    .sort((a, b) => (b.cost - a.cost) || (a.idx - b.idx))
-    .slice(0, n)
-    .map(item => item.idx);
+  const targetGroupSizes = targetGroupIndices.map(idx => groups[idx].memberIds.length);
+  const machineCosts = machines.map(m => totalCost(m));
+  const bestAssignment = findBestMachineAssignment(targetGroupSizes, machineCosts, state.config.tolerancePercent);
 
-  // Aplicar emparejamiento mayor a mayor (costo vs tamaño)
   groups.forEach(g => (g.machineId = null));
+  if (bestAssignment && Array.isArray(bestAssignment.machineIndices) && bestAssignment.machineIndices.length === n) {
+    for (let i = 0; i < n; i++) {
+      const groupIdx = targetGroupIndices[i];
+      const machineIdx = bestAssignment.machineIndices[i];
+      groups[groupIdx].machineId = machines[machineIdx].id;
+    }
+    return;
+  }
+
+  const fallbackAssignment = buildGreedyMachineAssignment(targetGroupSizes, machineCosts);
   for (let i = 0; i < n; i++) {
     const groupIdx = targetGroupIndices[i];
-    groups[groupIdx].machineId = machines[sortedMachineIndices[i]].id;
+    groups[groupIdx].machineId = machines[fallbackAssignment[i]].id;
   }
 }
 
@@ -3026,6 +3072,41 @@ function calculateResults() {
   };
 }
 
+function buildBalanceDiagnostics(results) {
+  if (!results || !Array.isArray(results.groupStats) || !(results.globalAvg > 0)) return [];
+
+  return results.groupStats.map(stat => {
+    const idealCost = stat.size * results.globalAvg;
+    const idealSize = stat.netValue / results.globalAvg;
+    const costGap = idealCost - stat.netValue;
+    const sizeGap = idealSize - stat.size;
+    const needsPeople = Math.abs(sizeGap) >= 0.75;
+
+    let suggestion;
+    if (needsPeople) {
+      suggestion = sizeGap > 0
+        ? `Agregar ~${sizeGap.toFixed(1)} persona(s)`
+        : `Quitar ~${Math.abs(sizeGap).toFixed(1)} persona(s)`;
+    } else if (Math.abs(costGap) >= 1) {
+      suggestion = costGap > 0
+        ? `Subir costo ~${fmt(Math.abs(costGap))}`
+        : `Bajar costo ~${fmt(Math.abs(costGap))}`;
+    } else {
+      suggestion = 'Sin ajuste relevante';
+    }
+
+    return {
+      ...stat,
+      idealCost,
+      idealSize,
+      costGap,
+      sizeGap,
+      suggestion,
+      needsPeople
+    };
+  }).sort((a, b) => Math.abs(b.pctDeviation) - Math.abs(a.pctDeviation));
+}
+
 /* ------------------------------------------------------------------ */
 /*  RENDERIZADO DE RESULTADOS                                          */
 /* ------------------------------------------------------------------ */
@@ -3053,6 +3134,7 @@ function renderResults(res) {
       🔎 Ranking aplicado: se ordenan las máquinas por <strong>costo total</strong> y los equipos por
       <strong>número de integrantes</strong>, emparejando de mayor a mayor.
     </div>`;
+  const diagnostics = buildBalanceDiagnostics(res);
 
   /* Cajas de métricas */
   const statsHtml = `
@@ -3103,6 +3185,39 @@ function renderResults(res) {
         </tbody>
       </table>
     </div>`;
+
+  const diagnosticsHtml = diagnostics.length
+    ? `
+    <div class="table-wrap" style="margin-bottom:1.5rem">
+      <table>
+        <thead>
+          <tr>
+            <th>Grupo</th><th>Costo actual</th><th>Costo ideal</th><th>Ajuste costo</th>
+            <th>Tam. actual</th><th>Tam. ideal</th><th>Ajuste personas</th><th>Sugerencia</th>
+          </tr>
+        </thead>
+        <tbody>
+          ${diagnostics.map(d => {
+            const costCls = d.costGap >= 0 ? 'ok' : 'under';
+            const sizeCls = d.sizeGap >= 0 ? 'ok' : 'under';
+            const sizeDelta = d.sizeGap >= 0 ? `+${d.sizeGap.toFixed(1)}` : d.sizeGap.toFixed(1);
+            const costDelta = d.costGap >= 0 ? `+${fmt(Math.abs(d.costGap))}` : `-${fmt(Math.abs(d.costGap))}`;
+            return `
+            <tr>
+              <td><strong>${esc(d.group.name)}</strong></td>
+              <td>${fmt(d.netValue)}</td>
+              <td>${fmt(d.idealCost)}</td>
+              <td class="${costCls}">${costDelta}</td>
+              <td>${d.size}</td>
+              <td>${d.idealSize.toFixed(1)}</td>
+              <td class="${sizeCls}">${sizeDelta}</td>
+              <td>${esc(d.suggestion)}</td>
+            </tr>`;
+          }).join('')}
+        </tbody>
+      </table>
+    </div>`
+    : '';
 
   /* Cards detalladas por grupo */
   const cardsHtml = `
@@ -3157,7 +3272,7 @@ function renderResults(res) {
         </div>`).join('')
     : '';
 
-  container.innerHTML = alertHtml + rankingHtml + statsHtml + warningsHtml + tableHtml + cardsHtml;
+  container.innerHTML = alertHtml + rankingHtml + statsHtml + warningsHtml + tableHtml + diagnosticsHtml + cardsHtml;
 
   /* Sección "Sin equipo" — personas que no pudieron ser asignadas */
   if (state.unassigned && state.unassigned.length > 0) {
@@ -3320,6 +3435,28 @@ function updateOptimizeProgress({ running = false, warning = false, success = fa
   textEl.textContent = text || (running ? 'Optimizando reparto...' : 'Listo');
 }
 
+function getStructuralImbalanceHints(results) {
+  if (!results || !Array.isArray(results.groupStats) || !(results.globalAvg > 0)) return '';
+
+  const worstUnder = results.groupStats
+    .filter(g => g.isUnder)
+    .sort((a, b) => a.pctDeviation - b.pctDeviation)
+    .slice(0, 2)
+    .map(g => {
+      const idealCost = g.size * results.globalAvg;
+      const idealSize = g.netValue / results.globalAvg;
+      const sizeGap = idealSize - g.size;
+
+      if (Math.abs(sizeGap) >= 0.75) {
+        return `"${g.group.name}" requeriría ~${idealSize.toFixed(1)} persona(s) para que la máquina actual quede cerca del promedio`;
+      }
+
+      return `"${g.group.name}" requeriría una máquina de ~${fmt(idealCost)} en vez de ${fmt(g.netValue)}`;
+    });
+
+  return worstUnder.length ? ` Bloqueos principales: ${worstUnder.join('; ')}.` : '';
+}
+
 function getUnresolvableMessage(results, attempts, ng, nm) {
   if (!results) {
     return `No fue posible calcular un reparto válido después de ${attempts} intento(s). Revisa que haya personas, grupos y máquinas asignables.`;
@@ -3341,8 +3478,9 @@ function getUnresolvableMessage(results, attempts, ng, nm) {
   const reasonText = reasons.length
     ? ` Posibles causas: ${reasons.join('; ')}.`
     : '';
+  const imbalanceText = getStructuralImbalanceHints(results);
 
-  return `Se agotaron ${attempts} intento(s) y el reparto no pudo entrar en la tolerancia de ${state.config.tolerancePercent}%. Mejor resultado: ${outside} grupo(s) fuera del límite, desviación máxima ${maxDev.toFixed(1)}%.${reasonText}`;
+  return `Se agotaron ${attempts} intento(s) y el reparto no pudo entrar en la tolerancia de ${state.config.tolerancePercent}%. Mejor resultado: ${outside} grupo(s) fuera del límite, desviación máxima ${maxDev.toFixed(1)}%.${reasonText}${imbalanceText}`;
 }
 
 function nextUiTick() {
@@ -3483,6 +3621,8 @@ async function optimize() {
 function exportCSV() {
   if (!state.results) { toast('Primero optimiza el reparto', 'error'); return; }
 
+  const diagnostics = buildBalanceDiagnostics(state.results);
+
   const rows = [
     ['Grupo','Máquina','Valor Máquina','Costo Transporte','Valor Neto',
      'Núm Personas','Ingreso Bruto/Persona','Inversión/Persona','Ganancia Neta/Persona',
@@ -3513,6 +3653,28 @@ function exportCSV() {
   rows.push(['Ganancia neta promedio/persona', state.results.globalAvg.toFixed(2)]);
   rows.push(['Desviación estándar', state.results.stdDev.toFixed(2)]);
   rows.push(['Coeficiente de variación %', state.results.cvPct.toFixed(2)]);
+
+  if (diagnostics.length) {
+    rows.push([]);
+    rows.push(['DIAGNOSTICO']);
+    rows.push([
+      'Grupo','Maquina','Costo Actual','Costo Ideal','Ajuste Costo',
+      'Tam Actual','Tam Ideal','Ajuste Personas','Sugerencia'
+    ]);
+    diagnostics.forEach(d => {
+      rows.push([
+        d.group.name,
+        d.machine.name,
+        d.netValue.toFixed(2),
+        d.idealCost.toFixed(2),
+        d.costGap.toFixed(2),
+        d.size,
+        d.idealSize.toFixed(2),
+        d.sizeGap.toFixed(2),
+        d.suggestion
+      ]);
+    });
+  }
 
   const csv = rows
     .map(r => r.map(cell => `"${String(cell).replace(/"/g, '""')}"`).join(','))
