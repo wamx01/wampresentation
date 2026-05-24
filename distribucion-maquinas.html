@@ -3551,7 +3551,11 @@ function compareResultQuality(candidate, current) {
     return candidate.cvPct - current.cvPct;
   }
 
-  return Math.abs(candidate.globalAvg) - Math.abs(current.globalAvg);
+  if (Math.abs(candidate.globalAvg - current.globalAvg) > FLOATING_POINT_EPSILON) {
+    return current.globalAvg - candidate.globalAvg;
+  }
+
+  return 0;
 }
 
 function tryDirectMachineSwaps(results) {
@@ -3593,16 +3597,59 @@ function tryDirectMachineSwaps(results) {
   return calculateResults();
 }
 
-function pickMemberIdForAdjustment(group, allowBreakFixedTeams) {
-  if (!group) return null;
+function getAdjustmentMinGroupSize(group) {
+  if (!group) return 0;
+  return Math.max(0, state.config.minGroupSize || 0);
+}
 
-  const movableMemberId = group.memberIds.find(memberId => {
+function getAdjustmentMaxGroupSize(group) {
+  if (!group) return Number.POSITIVE_INFINITY;
+  const absMax = state.config.absMaxGroupSize || 0;
+  return absMax > 0 ? absMax : Number.POSITIVE_INFINITY;
+}
+
+function canGroupReceiveMembers(group, incomingCount) {
+  if (!group || incomingCount <= 0) return false;
+  return (group.memberIds.length + incomingCount) <= getAdjustmentMaxGroupSize(group);
+}
+
+function canGroupDonateMembers(group, outgoingCount) {
+  if (!group || outgoingCount <= 0) return false;
+  return (group.memberIds.length - outgoingCount) >= getAdjustmentMinGroupSize(group);
+}
+
+function pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeams) {
+  if (!donorGroup || !receiverGroup) return null;
+
+  const movableMemberId = donorGroup.memberIds.find(memberId => {
     const person = state.people.find(p => p.id === memberId);
     return person && !normalizeTeamName(person.fixedGroupName);
   });
-  if (movableMemberId || !allowBreakFixedTeams) return movableMemberId || null;
+  if (movableMemberId) {
+    if (!canGroupReceiveMembers(receiverGroup, 1) || !canGroupDonateMembers(donorGroup, 1)) return null;
+    return { memberIds: [movableMemberId], breaksFixedTeam: false };
+  }
 
-  return group.memberIds.length ? group.memberIds[group.memberIds.length - 1] : null;
+  if (!allowBreakFixedTeams) return null;
+
+  const fixedTeamBlocks = new Map();
+  donorGroup.memberIds.forEach(memberId => {
+    const person = state.people.find(p => p.id === memberId);
+    const teamName = normalizeTeamName(person?.fixedGroupName);
+    if (!teamName) return;
+    if (!fixedTeamBlocks.has(teamName)) fixedTeamBlocks.set(teamName, []);
+    fixedTeamBlocks.get(teamName).push(memberId);
+  });
+
+  const candidates = [...fixedTeamBlocks.values()]
+    .filter(memberIds => canGroupReceiveMembers(receiverGroup, memberIds.length) && canGroupDonateMembers(donorGroup, memberIds.length))
+    .sort((a, b) => a.length - b.length);
+
+  if (!candidates.length) return null;
+  return {
+    memberIds: [...candidates[0]],
+    breaksFixedTeam: true
+  };
 }
 
 function applyRecommendationPass(results, options = {}) {
@@ -3622,7 +3669,11 @@ function applyRecommendationPass(results, options = {}) {
       const receiverGroup = groupById.get(receiver.group.id);
       if (!receiverGroup) return;
 
-      const needed = Math.max(0, Math.round(receiver.sizeGap));
+      const receiverCapacity = getAdjustmentMaxGroupSize(receiverGroup) - receiverGroup.memberIds.length;
+      const needed = Math.min(
+        Math.max(0, Math.round(receiver.sizeGap)),
+        Math.max(0, receiverCapacity)
+      );
       if (!needed) return;
 
       const incoming = state.unassigned.splice(0, needed);
@@ -3644,22 +3695,34 @@ function applyRecommendationPass(results, options = {}) {
 
     let movableNeeded = Math.max(0, Math.round(Math.abs(donor.sizeGap)));
     while (movableNeeded > 0) {
-      const receiver = receivers.find(candidate => {
+      let receiver = null;
+      let adjustment = null;
+
+      receivers.some(candidate => {
         if (candidate.group.id === donor.group.id) return false;
         const receiverGroup = groupById.get(candidate.group.id);
-        return receiverGroup && candidate.sizeGap >= 0.75;
+        if (!receiverGroup || candidate.sizeGap < 0.75) return false;
+
+        const candidateAdjustment = pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeams);
+        if (!candidateAdjustment || !candidateAdjustment.memberIds.length) return false;
+
+        receiver = candidate;
+        adjustment = candidateAdjustment;
+        return true;
       });
       if (!receiver) break;
 
       const receiverGroup = groupById.get(receiver.group.id);
-      const memberId = pickMemberIdForAdjustment(donorGroup, allowBreakFixedTeams);
-      if (!memberId) break;
+      if (!receiverGroup || !adjustment || !adjustment.memberIds.length) break;
 
-      donorGroup.memberIds = donorGroup.memberIds.filter(id => id !== memberId);
-      if (!receiverGroup.memberIds.includes(memberId)) receiverGroup.memberIds.push(memberId);
-      receiver.sizeGap -= 1;
-      movableNeeded--;
-      appliedMoves++;
+      const movingIds = adjustment.memberIds;
+      donorGroup.memberIds = donorGroup.memberIds.filter(id => !movingIds.includes(id));
+      movingIds.forEach(memberId => {
+        if (!receiverGroup.memberIds.includes(memberId)) receiverGroup.memberIds.push(memberId);
+      });
+      receiver.sizeGap -= movingIds.length;
+      movableNeeded = Math.max(0, movableNeeded - movingIds.length);
+      appliedMoves += movingIds.length;
     }
   });
 
@@ -3700,9 +3763,9 @@ async function autoAdjustFromRecommendations() {
 
     if (!pass.appliedMoves) break;
 
-    roundsUsed = round;
-    totalAppliedMoves += pass.appliedMoves;
     if (compareResultQuality(pass.results, bestResults) < 0) {
+      roundsUsed = round;
+      totalAppliedMoves += pass.appliedMoves;
       bestResults = pass.results;
       bestSnapshot = captureAdjustmentSnapshot();
       if (bestResults.isBalanced) break;
@@ -3720,7 +3783,7 @@ async function autoAdjustFromRecommendations() {
   scheduleSupabaseAutoSave();
 
   if (!totalAppliedMoves) {
-    toast('No hubo ajustes automáticos aplicables; revisa si todos los equipos están fijos', 'warning');
+    toast('No hubo ajustes automáticos que mejoraran el reparto respetando las restricciones actuales', 'warning');
     return;
   }
 
