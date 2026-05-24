@@ -2129,26 +2129,47 @@ function renderMachines() {
 /*  GRUPOS                                                             */
 /* ------------------------------------------------------------------ */
 
+function buildMachineQuotaPlan(totalPeople) {
+  readConfig();
+  const { minGroupSize, absMaxGroupSize, numGroups: cfgN } = state.config;
+  const machineLimit = cfgN > 0 ? Math.min(cfgN, state.machines.length) : state.machines.length;
+  const machines = [...state.machines]
+    .slice(0, machineLimit)
+    .sort((a, b) => totalCost(b) - totalCost(a));
+
+  if (!machines.length) return [];
+
+  const targetSizes = totalPeople > 0
+    ? computeProportionalSizes(
+        machines.map(machine => totalCost(machine)),
+        totalPeople,
+        Math.min(minGroupSize, Math.max(1, totalPeople)),
+        absMaxGroupSize
+      )
+    : new Array(machines.length).fill(0);
+
+  return machines.map((machine, index) => ({
+    machine,
+    targetSize: targetSizes[index] || 0
+  }));
+}
+
 /**
  * Crea grupos automáticamente con tamaños PROPORCIONALES al costo de cada
- * máquina para maximizar el equilibrio del costo/persona entre grupos.
- * Los tamaños se calculan con el método Hamilton + refinamiento iterativo.
+ * máquina. Paso 1: define cuántas personas le tocan a cada máquina.
+ * Paso 2: acomoda equipos/personas dentro de esos cupos sin reoptimizar después.
  *
  * Lógica de grupos pre-asignados:
  *  - Todo equipo predefinido (fixedGroupName) se mantiene como bloque indivisible.
- *  - Los bloques pueden combinarse con otros equipos o con personas libres,
- *    pero nunca se separan sus integrantes.
- *  - Personas libres (sin grupo): se distribuyen en nuevos grupos proporcionales al costo.
+ *  - Los bloques se acomodan en la máquina cuyo cupo los absorba mejor.
+ *  - Personas libres (sin grupo): rellenan los cupos restantes.
  */
 function autoCreateGroups() {
   readConfig();
-  const { minGroupSize, absMaxGroupSize, numGroups: cfgN } = state.config;
+  const { absMaxGroupSize } = state.config;
 
   if (!state.machines.length) { toast('Agrega al menos una máquina', 'error'); return false; }
   if (!state.people.length)   { toast('Agrega personas primero', 'error');     return false; }
-
-  const numMachines = state.machines.length;
-  const totalGroups = cfgN > 0 ? cfgN : numMachines;
 
   // ── Separate people into pre-assigned (fixed) and free ──────────────────
   const fixedMap = new Map(); // normalised key → { displayName, people[] }
@@ -2163,102 +2184,85 @@ function autoCreateGroups() {
     }
   });
 
-  // Todos los equipos fijos se respetan tal cual (incluyendo equipos pequeños).
-  const establishedEntries = [...fixedMap.values()];
+  const fixedTeams = [...fixedMap.values()]
+    .sort((a, b) => b.people.length - a.people.length || a.displayName.localeCompare(b.displayName, 'es', { sensitivity: 'base' }));
   state.unassigned = [];
+  const machinePlan = buildMachineQuotaPlan(state.people.length);
+  if (!machinePlan.length) return false;
 
-  const numFixedGroups = establishedEntries.length;
-  // totalGroups ya declarado arriba para la validación temprana
-  const numFreeGroups  = Math.max(0, totalGroups - numFixedGroups);
-
-  // Ordenar máquinas por costo descendente
-  const sortedMachines = [...state.machines]
-    .slice(0, totalGroups)
-    .sort((a, b) => totalCost(b) - totalCost(a));
-
-  // Advertir si el tamaño promedio de los grupos libres supera el máximo
-  if (numFreeGroups > 0 && freePeople.length > 0) {
-    const avgFreeSize = freePeople.length / numFreeGroups;
-    if (avgFreeSize > absMaxGroupSize) {
+  if (absMaxGroupSize > 0) {
+    const avgSize = state.people.length / machinePlan.length;
+    if (avgSize > absMaxGroupSize) {
       toast(
-        `⚠ Con ${freePeople.length} personas libres y ${numFreeGroups} grupos libres el promedio es ${avgFreeSize.toFixed(1)} > máx. absoluto ${absMaxGroupSize}. Se crearán grupos más grandes.`,
+        `⚠ Con ${state.people.length} personas y ${machinePlan.length} máquinas el promedio es ${avgSize.toFixed(1)} > máx. absoluto ${absMaxGroupSize}.`,
         'warning'
       );
     }
   }
 
-  state.groups = [];
+  state.groups = machinePlan.map((slot, index) => ({
+    id: uid(),
+    name: `Grupo ${index + 1}`,
+    memberIds: [],
+    machineId: slot.machine.id
+  }));
 
-  // 1. Crear grupos establecidos (equipo fijo con tamaño suficiente) ─────────
-  establishedEntries.forEach(fg => {
-    state.groups.push({
-      id:        uid(),
-      name:      fg.displayName,
-      memberIds: fg.people.map(p => p.id),
-      machineId: null
-    });
+  const pickBestGroupIndex = (incomingSize) => {
+    const candidates = state.groups
+      .map((group, index) => {
+        const targetSize = machinePlan[index].targetSize;
+        const currentSize = group.memberIds.length;
+        const nextSize = currentSize + incomingSize;
+        const hardOverflow = absMaxGroupSize > 0 && nextSize > absMaxGroupSize;
+        return {
+          index,
+          currentSize,
+          targetSize,
+          remaining: targetSize - currentSize,
+          overflow: Math.max(0, nextSize - targetSize),
+          hardOverflow
+        };
+      })
+      .filter(candidate => !candidate.hardOverflow)
+      .sort((a, b) => {
+        const aFits = a.remaining >= incomingSize ? 0 : 1;
+        const bFits = b.remaining >= incomingSize ? 0 : 1;
+        if (aFits !== bFits) return aFits - bFits;
+        if (a.overflow !== b.overflow) return a.overflow - b.overflow;
+        if (a.remaining !== b.remaining) return b.remaining - a.remaining;
+        return a.currentSize - b.currentSize;
+      });
+
+    if (candidates.length) return candidates[0].index;
+
+    return state.groups
+      .map((group, index) => ({ index, size: group.memberIds.length }))
+      .sort((a, b) => a.size - b.size || a.index - b.index)[0]?.index ?? 0;
+  };
+
+  fixedTeams.forEach(team => {
+    const groupIndex = pickBestGroupIndex(team.people.length);
+    state.groups[groupIndex].memberIds.push(...team.people.map(person => person.id));
   });
 
-  // 2. Crear grupos libres y distribuir las personas sin equipo ───────────
-  if (numFreeGroups > 0) {
-    const freeMachineCosts = sortedMachines.slice(numFixedGroups).map(m => totalCost(m));
-    let sizes;
-    if (freePeople.length > 0 && freeMachineCosts.length > 0) {
-      sizes = computeProportionalSizes(freeMachineCosts, freePeople.length, minGroupSize, absMaxGroupSize);
-    } else if (freePeople.length > 0) {
-      sizes = distributeEvenSizes(freePeople.length, numFreeGroups);
-    } else {
-      sizes = new Array(numFreeGroups).fill(0);
-    }
+  let freeIndex = 0;
+  state.groups.forEach((group, index) => {
+    const targetSize = machinePlan[index].targetSize;
+    const missing = Math.max(0, targetSize - group.memberIds.length);
+    if (!missing) return;
+    group.memberIds.push(...freePeople.slice(freeIndex, freeIndex + missing).map(person => person.id));
+    freeIndex += missing;
+  });
 
-    const baseSizes = [
-      ...establishedEntries.map(fg => fg.people.length),
-      ...new Array(numFreeGroups).fill(0)
-    ];
-    const initialTotals = [
-      ...establishedEntries.map(fg => fg.people.length),
-      ...sizes
-    ];
-    const minTotals = [
-      ...establishedEntries.map(fg => fg.people.length),
-      // Si un grupo libre ya nace por debajo del mínimo por una restricción real
-      // de personas disponibles, conservamos ese tamaño para no volver inviable
-      // la búsqueda local exigiendo más integrantes de los que existen.
-      ...sizes.map(size => size > 0 ? Math.min(minGroupSize, size) : 0)
-    ];
-    const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
-    const optimized = optimizeGroupSizesIterative(
-      initialTotals,
-      minTotals,
-      maxTotals,
-      state.machines.map(m => totalCost(m)),
-      state.config.tolerancePercent
-    );
-    const targetTotals = optimized.sizes;
+  while (freeIndex < freePeople.length) {
+    const groupIndex = pickBestGroupIndex(1);
+    const person = freePeople[freeIndex++];
+    if (!person) break;
+    state.groups[groupIndex].memberIds.push(person.id);
+  }
 
-    const shuffled = [...freePeople].sort(() => Math.random() - 0.5);
-    let idx = 0;
-
-    state.groups.forEach((group, groupIdx) => {
-      const currentSize = group.memberIds.length;
-      const targetSize = targetTotals[groupIdx] || currentSize;
-      const extraNeeded = Math.max(0, targetSize - currentSize);
-      if (extraNeeded > 0) {
-        group.memberIds.push(...shuffled.slice(idx, idx + extraNeeded).map(p => p.id));
-        idx += extraNeeded;
-      }
-    });
-
-    for (let i = 0; i < numFreeGroups; i++) {
-      const size = targetTotals[numFixedGroups + i] || 0;
-      state.groups.push({
-        id:        uid(),
-        name:      `Grupo ${numFixedGroups + i + 1}`,
-        memberIds: shuffled.slice(idx, idx + size).map(p => p.id),
-        machineId: null
-      });
-      idx += size;
-    }
+  if (freeIndex < freePeople.length) {
+    state.unassigned = freePeople.slice(freeIndex);
   }
 
   scheduleSupabaseAutoSave();
@@ -4014,76 +4018,23 @@ async function optimize() {
       if (!autoCreateGroups()) return;
     }
 
-    // Fusionar grupos sobrantes antes de asignar máquinas
     const ng = state.groups.length;
     const nm = state.machines.length;
-    if (ng > nm) {
-      const wasMerged = mergeSmallestGroups();
-      if (wasMerged) {
-        toast('ℹ Se fusionaron grupos pequeños para que cada máquina tenga un grupo asignado.', 'info');
-      }
-    } else if (ng < nm) {
-      toast(`⚠ Hay ${nm} máquinas pero solo ${ng} grupos. ${nm - ng} máquina(s) no serán asignadas.`, 'warning');
-    }
 
     let results = null;
     let attempts = 1;
 
     if (state.mode === 'auto') {
-      const maxRetries = Math.min(200, Math.max(1, state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES));
-      let bestSnapshot = null;
-      let bestResults = null;
-
-      for (let attempt = 1; attempt <= maxRetries; attempt++) {
-        attempts = attempt;
-        updateOptimizeProgress({
-          running: true,
-          attempt,
-          total: maxRetries,
-          text: `Iteración ${attempt} de ${maxRetries}...`
-        });
-        await nextUiTick();
-
-        // Partir siempre del mejor estado conocido para que cada iteración mejore sobre la anterior
-        if (bestSnapshot) {
-          applyGroupStateSnapshot(bestSnapshot);
-          if (attempt > 1 && bestResults) applyGuidedRetryPerturbation(bestResults);
-        }
-
-        // Orden correcto: primero fijar cuántas personas debería tener cada grupo,
-        // luego asignar la mejor máquina para esos tamaños objetivo.
-        const targetTotals = buildTargetGroupSizesFromMachinePool();
-        autoDistribute({ silent: true, targetTotalsOverride: targetTotals });
-        assignMachinesOptimal();
-
-        const candidate = calculateResults();
-        if (!candidate) break;
-
-        const candidateOutside = countGroupsOutsideTolerance(candidate);
-        const bestOutside = countGroupsOutsideTolerance(bestResults);
-        const isBetter = !bestResults
-          || candidateOutside < bestOutside
-          || (candidateOutside === bestOutside && candidate.cvPct + FLOATING_POINT_EPSILON < bestResults.cvPct);
-
-        if (isBetter) {
-          bestResults = candidate;
-          bestSnapshot = captureGroupStateSnapshot();
-        }
-
-        if (candidate.isBalanced) break;
-      }
-
-      if (bestSnapshot) applyGroupStateSnapshot(bestSnapshot);
       results = calculateResults();
       updateOptimizeProgress({
         running: false,
         warning: !!results && !results.isBalanced,
         success: !!results && results.isBalanced,
-        attempt: attempts,
-        total: maxRetries,
-        text: results && results.isBalanced
-          ? `Reparto equilibrado en ${attempts} intento(s).`
-          : getUnresolvableMessage(results, attempts, ng, nm)
+        attempt: 1,
+        total: 1,
+        text: results
+          ? 'Modo auto: se calcularon cupos por máquina y luego se asignaron equipos/personas.'
+          : 'No se pudo calcular el reparto automático.'
       });
     } else {
       assignMachinesOptimal();
