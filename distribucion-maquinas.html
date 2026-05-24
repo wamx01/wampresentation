@@ -1161,6 +1161,7 @@
   <button class="btn btn-secondary"      id="btn-sb-load">📥 Cargar nube</button>
   <span style="width:1px;height:1.5rem;background:var(--border);margin:0 .2rem;flex-shrink:0"></span>
   <button class="btn btn-secondary"      id="btn-export-csv">📊 Exportar CSV</button>
+  <button class="btn btn-secondary"      id="btn-export-results-pdf">📄 Exportar resultados PDF</button>
   <button class="btn btn-secondary"      id="btn-export-teams-csv">👥 Exportar equipos CSV</button>
   <button class="btn btn-secondary"      id="btn-export-teams-pdf">🧾 Exportar equipos PDF</button>
   <button class="btn btn-secondary"      id="btn-export-json">💾 Guardar JSON</button>
@@ -3531,7 +3532,7 @@ function exportCSV() {
   const diagnostics = buildBalanceDiagnostics(state.results);
 
   const rows = [
-    ['Grupo','Máquina','Valor Máquina','Costo Transporte','Valor Neto',
+    ['Grupo','Máquina','Cupo objetivo','Valor Máquina','Costo Transporte','Valor Neto',
      'Núm Personas','Ingreso Bruto/Persona','Inversión/Persona','Ganancia Neta/Persona',
      'Desviación $','Desviación %','Miembros']
   ];
@@ -3539,6 +3540,7 @@ function exportCSV() {
     rows.push([
       s.group.name,
       s.machine.name,
+      Number.isFinite(s.group.targetSize) ? s.group.targetSize : '',
       s.machine.baseCost.toFixed(2),
       s.transport.toFixed(2),
       s.netValue.toFixed(2),
@@ -3565,13 +3567,14 @@ function exportCSV() {
     rows.push([]);
     rows.push(['DIAGNOSTICO']);
     rows.push([
-      'Grupo','Maquina','Costo Actual','Costo Ideal','Ajuste Costo',
+      'Grupo','Maquina','Cupo objetivo','Costo Actual','Costo Ideal','Ajuste Costo',
       'Tam Actual','Tam Ideal','Ajuste Personas','Sugerencia'
     ]);
     diagnostics.forEach(d => {
       rows.push([
         d.group.name,
         d.machine.name,
+        Number.isFinite(d.group.targetSize) ? d.group.targetSize : '',
         d.netValue.toFixed(2),
         d.idealCost.toFixed(2),
         d.costGap.toFixed(2),
@@ -3588,6 +3591,107 @@ function exportCSV() {
     .join('\n');
   downloadFile('reparto_maquinas.csv', '\uFEFF' + csv, 'text/csv;charset=utf-8');
   toast('CSV descargado', 'success');
+}
+
+function exportResultsPDF() {
+  if (!state.results) {
+    toast('Primero optimiza el reparto', 'error');
+    return;
+  }
+
+  if (!window.jspdf || !window.jspdf.jsPDF) {
+    toast('No se pudo cargar la librería para PDF', 'error');
+    return;
+  }
+
+  const diagnostics = buildBalanceDiagnostics(state.results);
+  const jsPDF = window.jspdf.jsPDF;
+  const doc = new jsPDF({ orientation: 'l', unit: 'pt', format: 'a4' });
+  const ts = new Date();
+  const fdate = ts.toLocaleString('es-MX');
+
+  doc.setFontSize(14);
+  doc.text('Resultados de reparto de maquinas', 40, 42);
+  doc.setFontSize(9);
+  doc.setTextColor(90);
+  doc.text(`Generado: ${fdate}`, 40, 58);
+
+  const summaryLines = [
+    `Total personas: ${state.results.totalAllPeople}`,
+    `Grupos con maquina: ${state.results.groupStats.length}`,
+    `Valor neto total: ${fmt(state.results.totalAllCosts)}`,
+    `Ganancia promedio/persona: ${fmt(state.results.globalAvg)}`,
+    `Desviacion estandar: ${fmt(state.results.stdDev)}`,
+    `Coeficiente de variacion: ${state.results.cvPct.toFixed(1)}%`
+  ];
+
+  let summaryY = 76;
+  doc.setFontSize(10);
+  doc.setTextColor(33);
+  summaryLines.forEach(line => {
+    doc.text(line, 40, summaryY);
+    summaryY += 14;
+  });
+
+  const resultBody = state.results.groupStats.map(s => [
+    s.group.name,
+    s.machine.name,
+    Number.isFinite(s.group.targetSize) ? String(s.group.targetSize) : '-',
+    String(s.size),
+    fmt(s.netValue),
+    fmt(s.cpp),
+    fmtPct(s.pctDeviation),
+    s.members.map(p => p.name).join(', ')
+  ]);
+
+  doc.autoTable({
+    startY: summaryY + 8,
+    head: [['Grupo', 'Maquina', 'Cupo objetivo', 'Personas', 'Valor neto', 'Ganancia neta/p', 'Desv. %', 'Miembros']],
+    body: resultBody,
+    theme: 'grid',
+    styles: { fontSize: 8, cellPadding: 4, lineColor: [220, 220, 220], lineWidth: 0.5 },
+    headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81] },
+    columnStyles: {
+      0: { cellWidth: 90 },
+      1: { cellWidth: 95 },
+      2: { cellWidth: 65, halign: 'center' },
+      3: { cellWidth: 55, halign: 'center' },
+      4: { cellWidth: 80, halign: 'right' },
+      5: { cellWidth: 85, halign: 'right' },
+      6: { cellWidth: 65, halign: 'right' },
+      7: { cellWidth: 220 }
+    }
+  });
+
+  if (diagnostics.length) {
+    doc.autoTable({
+      startY: doc.lastAutoTable.finalY + 20,
+      head: [['Grupo', 'Cupo objetivo', 'Tam. actual', 'Tam. ideal', 'Ajuste personas', 'Sugerencia']],
+      body: diagnostics.map(d => [
+        d.group.name,
+        Number.isFinite(d.group.targetSize) ? String(d.group.targetSize) : '-',
+        String(d.size),
+        d.idealSize.toFixed(1),
+        d.sizeGap.toFixed(1),
+        d.suggestion
+      ]),
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 4, lineColor: [220, 220, 220], lineWidth: 0.5 },
+      headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81] },
+      columnStyles: {
+        0: { cellWidth: 110 },
+        1: { cellWidth: 65, halign: 'center' },
+        2: { cellWidth: 65, halign: 'center' },
+        3: { cellWidth: 65, halign: 'right' },
+        4: { cellWidth: 75, halign: 'right' },
+        5: { cellWidth: 300 }
+      }
+    });
+  }
+
+  const fname = `resultados_reparto_${ts.toISOString().slice(0,10)}.pdf`;
+  doc.save(fname);
+  toast('PDF de resultados descargado', 'success');
 }
 
 function getTeamsGroupedEntries() {
@@ -3710,6 +3814,31 @@ function exportTeamsPDF() {
 
 function exportJSON() {
   const snapshot = getSerializableSnapshot();
+  const resultExport = state.results
+    ? {
+        totalPersonas: state.results.totalAllPeople,
+        totalGruposConMaquina: state.results.groupStats.length,
+        valorNetoTotal: state.results.totalAllCosts,
+        gananciaPromedioPorPersona: state.results.globalAvg,
+        desviacionEstandar: state.results.stdDev,
+        coeficienteVariacionPct: state.results.cvPct,
+        grupos: state.results.groupStats.map(s => ({
+          grupo: s.group.name,
+          maquina: s.machine.name,
+          cupoObjetivo: Number.isFinite(s.group.targetSize) ? s.group.targetSize : null,
+          personasAsignadas: s.size,
+          valorMaquina: s.machine.baseCost,
+          costoTransporte: s.transport,
+          valorNeto: s.netValue,
+          ingresoBrutoPorPersona: s.grossPerPerson,
+          inversionPorPersona: s.investPerPerson,
+          gananciaNetaPorPersona: s.cpp,
+          desviacion: s.deviation,
+          desviacionPct: s.pctDeviation,
+          miembros: s.members.map(p => p.name)
+        }))
+      }
+    : null;
   const data = {
     version: 3,
     fecha: snapshot.savedAt,
@@ -3733,7 +3862,8 @@ function exportJSON() {
       nombre: m.name,
       costoBase: m.baseCost,
       costoTransporte: m.transportCost
-    }))
+    })),
+    resultado: resultExport
   };
   const ts   = new Date().toISOString().slice(0,10); // YYYY-MM-DD
   downloadFile(`configuracion_reparto_${ts}.json`, JSON.stringify(data, null, 2), 'application/json');
@@ -4011,6 +4141,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Exportar --- */
   document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
+  document.getElementById('btn-export-results-pdf').addEventListener('click', exportResultsPDF);
   document.getElementById('btn-export-teams-csv').addEventListener('click', exportTeamsCSV);
   document.getElementById('btn-export-teams-pdf').addEventListener('click', exportTeamsPDF);
   document.getElementById('btn-export-json').addEventListener('click', exportJSON);
