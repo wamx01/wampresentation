@@ -2703,6 +2703,32 @@ function assignMachineManual(groupId, machineId) {
   scheduleSupabaseAutoSave();
 }
 
+function buildTargetGroupSizesFromMachinePool() {
+  const groups = state.groups || [];
+  const machines = state.machines || [];
+  const n = Math.min(groups.length, machines.length);
+  if (!n) return [];
+
+  const activeGroups = groups.slice(0, n);
+  const initialSizes = activeGroups.map(group => group.memberIds.length);
+  const minSizes = activeGroups.map(group => getAdjustmentMinGroupSize(group, false));
+  const maxSizes = activeGroups.map(group => getAdjustmentMaxGroupSize(group));
+  const machineCosts = [...machines]
+    .map(machine => totalCost(machine))
+    .sort((a, b) => b - a)
+    .slice(0, n);
+
+  const optimized = optimizeGroupSizesIterative(
+    initialSizes,
+    minSizes,
+    maxSizes,
+    machineCosts,
+    state.config.tolerancePercent
+  );
+
+  return optimized && Array.isArray(optimized.sizes) ? optimized.sizes : initialSizes;
+}
+
 function removePersonFromGroup(personId) {
   state.groups.forEach(g => { g.memberIds = g.memberIds.filter(id => id !== personId); });
   renderGroups();
@@ -2716,7 +2742,7 @@ function removePersonFromGroup(personId) {
  *  Si un equipo no encuentra coincidencia, se conserva como bloque y se combina
  *  completo con otro grupo, sin separar integrantes. */
 function autoDistribute(options = {}) {
-  const { silent = false } = options;
+  const { silent = false, targetTotalsOverride = null } = options;
   readConfig();
   const { absMaxGroupSize } = state.config;
   if (!state.groups.length) {
@@ -2800,34 +2826,39 @@ function autoDistribute(options = {}) {
   });
   const allAssigned = groupCosts.every(c => c !== null);
 
-  let sizes;
-  if (allAssigned) {
-    sizes = computeProportionalSizes(groupCosts, total, 0, absMaxGroupSize);
+  let targetTotals;
+  if (Array.isArray(targetTotalsOverride) && targetTotalsOverride.length === state.groups.length) {
+    targetTotals = [...targetTotalsOverride];
   } else {
-    sizes = distributeEvenSizes(total, ng);
-  }
+    let sizes;
+    if (allAssigned) {
+      sizes = computeProportionalSizes(groupCosts, total, 0, absMaxGroupSize);
+    } else {
+      sizes = distributeEvenSizes(total, ng);
+    }
 
-  const baseSizes = state.groups.map(g => g.memberIds.length);
-  const initialTotals = baseSizes.map((base, idx) => base + (sizes[idx] || 0));
-  // Si un grupo libre ya iba a recibir personas, mantenlo al menos con 1 para
-  // no vaciarlo durante la optimización y desperdiciar una máquina asignable.
-  const minTotals = baseSizes.map((base, idx) => base + (base === 0 && (sizes[idx] || 0) > 0 ? 1 : 0));
-  const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
-  // Usar los costos en ORDEN DE GRUPO (mapeados por la asignación actual);
-  // si alguno no tiene máquina, usar el costo promedio como fallback.
-  const avgMachineCost = state.machines.reduce((s, m) => s + totalCost(m), 0) / (state.machines.length || 1);
-  const groupOrderedCosts = state.groups.map(g => {
-    const m = g.machineId ? state.machines.find(m => m.id === g.machineId) : null;
-    return m ? totalCost(m) : avgMachineCost;
-  });
-  const optimized = optimizeGroupSizesIterative(
-    initialTotals,
-    minTotals,
-    maxTotals,
-    groupOrderedCosts,
-    state.config.tolerancePercent
-  );
-  const targetTotals = optimized.sizes;
+    const baseSizes = state.groups.map(g => g.memberIds.length);
+    const initialTotals = baseSizes.map((base, idx) => base + (sizes[idx] || 0));
+    // Si un grupo libre ya iba a recibir personas, mantenlo al menos con 1 para
+    // no vaciarlo durante la optimización y desperdiciar una máquina asignable.
+    const minTotals = baseSizes.map((base, idx) => base + (base === 0 && (sizes[idx] || 0) > 0 ? 1 : 0));
+    const maxTotals = baseSizes.map(base => Math.max(absMaxGroupSize, base));
+    // Usar los costos en ORDEN DE GRUPO (mapeados por la asignación actual);
+    // si alguno no tiene máquina, usar el costo promedio como fallback.
+    const avgMachineCost = state.machines.reduce((s, m) => s + totalCost(m), 0) / (state.machines.length || 1);
+    const groupOrderedCosts = state.groups.map(g => {
+      const m = g.machineId ? state.machines.find(m => m.id === g.machineId) : null;
+      return m ? totalCost(m) : avgMachineCost;
+    });
+    const optimized = optimizeGroupSizesIterative(
+      initialTotals,
+      minTotals,
+      maxTotals,
+      groupOrderedCosts,
+      state.config.tolerancePercent
+    );
+    targetTotals = optimized.sizes;
+  }
 
   // 1) Ubicar equipos no coincidentes como bloques indivisibles.
   const unmatchedTeamsShuffled = [...unmatchedTeams].sort(() => Math.random() - 0.5);
@@ -4019,13 +4050,10 @@ async function optimize() {
           if (attempt > 1 && bestResults) applyGuidedRetryPerturbation(bestResults);
         }
 
-        // Refinar en ciclo corto para evitar asignaciones desfasadas:
-        // al cambiar tamaños durante la distribución, se vuelve a asignar.
-        assignMachinesOptimal();
-        autoDistribute({ silent: true });
-        assignMachinesOptimal();
-        autoDistribute({ silent: true });
-        // Última pasada: asegurar cierre final mayor-a-mayor con tamaños actuales.
+        // Orden correcto: primero fijar cuántas personas debería tener cada grupo,
+        // luego asignar la mejor máquina para esos tamaños objetivo.
+        const targetTotals = buildTargetGroupSizesFromMachinePool();
+        autoDistribute({ silent: true, targetTotalsOverride: targetTotals });
         assignMachinesOptimal();
 
         const candidate = calculateResults();
