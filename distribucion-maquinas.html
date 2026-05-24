@@ -3093,12 +3093,18 @@ function buildBalanceDiagnostics(results) {
 
 function renderResults(res) {
   const container = document.getElementById('results-container');
+  const exportActionsHtml = `
+    <div class="form-row mb-1" style="margin-bottom:1rem">
+      <button class="btn btn-secondary" id="btn-export-results-pdf-rendered">📄 Exportar resultados PDF</button>
+    </div>`;
   if (!res) {
     container.innerHTML = `
+      ${exportActionsHtml}
       <div class="empty-state">
         <span class="ei">📊</span>
         <p>Presiona <strong>⚖️ Balancear / Optimizar Reparto</strong> para ver el reparto.</p>
       </div>`;
+    document.getElementById('btn-export-results-pdf-rendered').addEventListener('click', exportResultsPDF);
     return;
   }
   state.results = res;
@@ -3255,7 +3261,8 @@ function renderResults(res) {
         </div>`).join('')
     : '';
 
-  container.innerHTML = alertHtml + rankingHtml + statsHtml + warningsHtml + tableHtml + diagnosticsHtml + cardsHtml;
+  container.innerHTML = exportActionsHtml + alertHtml + rankingHtml + statsHtml + warningsHtml + tableHtml + diagnosticsHtml + cardsHtml;
+  document.getElementById('btn-export-results-pdf-rendered').addEventListener('click', exportResultsPDF);
 
   /* Sección "Sin equipo" — personas que no pudieron ser asignadas */
   if (state.unassigned && state.unassigned.length > 0) {
