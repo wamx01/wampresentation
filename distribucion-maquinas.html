@@ -71,6 +71,17 @@
       align-items: center;
       gap: .4rem;
     }
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: .75rem;
+      flex-wrap: wrap;
+      margin-bottom: .875rem;
+    }
+    .card-head h2 {
+      margin-bottom: 0;
+    }
 
     /* ===== Tabs ===== */
     .tabs {
@@ -1129,9 +1140,9 @@
        TAB: RESULTADOS
        ================================================================== -->
   <div id="tab-resultados" class="tab-content card">
-    <h2>📊 Resultados</h2>
-    <div class="form-row mb-1">
-      <button class="btn btn-secondary" id="btn-export-results-pdf-inline">📄 Exportar resultados PDF</button>
+    <div class="card-head">
+      <h2>📊 Resultados</h2>
+      <button class="btn btn-primary" id="btn-export-results-pdf-inline">📄 Exportar resultados PDF</button>
     </div>
     <div id="results-container">
       <div class="empty-state">
