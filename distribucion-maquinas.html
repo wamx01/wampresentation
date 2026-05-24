@@ -897,6 +897,14 @@
         <input type="number" id="cfg-transportRate" value="10" min="0" max="100" placeholder="%" style="margin-top:.3rem">
       </div>
 
+      <div class="form-group">
+        <label>Ajustes avanzados</label>
+        <label class="cfg-checkbox">
+          <input type="checkbox" id="cfg-breakFixedTeams">
+          <span style="font-size:.78rem">Permitir romper equipos fijos como último recurso</span>
+        </label>
+      </div>
+
     </div>
 
     <div class="supabase-panel" id="sb-panel">
@@ -1145,6 +1153,7 @@
      ================================================================== -->
 <div class="action-bar">
   <button class="btn btn-success btn-lg" id="btn-optimize">⚖️ Balancear / Optimizar Reparto</button>
+  <button class="btn btn-secondary"      id="btn-auto-adjust">🪄 Autoajustar recomendaciones</button>
   <div class="opt-progress" id="opt-progress" aria-live="polite" aria-atomic="true">
     <span class="opt-spinner" aria-hidden="true"></span>
     <div class="opt-progress-meta">
@@ -1470,7 +1479,8 @@ const state = {
     tolerancePercent: 20,
     maxOptimizeRetries: 3,
     autoTransport:   false,
-    transportRate:   10   // % del costo base
+    transportRate:   10,  // % del costo base
+    breakFixedTeams: false
   },
   mode: 'auto'  // 'auto' | 'manual'
 };
@@ -1508,6 +1518,7 @@ function readConfig() {
   state.config.maxOptimizeRetries = Math.min(200, Math.max(1, parseInt(document.getElementById('cfg-maxRetries').value) || DEFAULT_MAX_OPTIMIZE_RETRIES));
   state.config.autoTransport    = document.getElementById('cfg-autoTransport').checked;
   state.config.transportRate    = Math.max(0, parseFloat(document.getElementById('cfg-transportRate').value) || 0);
+  state.config.breakFixedTeams  = document.getElementById('cfg-breakFixedTeams').checked;
   state.mode                    = document.getElementById('cfg-mode').value;
 }
 
@@ -1521,6 +1532,7 @@ function syncConfigToDom() {
   document.getElementById('cfg-maxRetries').value = state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES;
   document.getElementById('cfg-autoTransport').checked = state.config.autoTransport;
   document.getElementById('cfg-transportRate').value = state.config.transportRate;
+  document.getElementById('cfg-breakFixedTeams').checked = !!state.config.breakFixedTeams;
   document.getElementById('grupos-auto-panel').style.display = state.mode === 'auto' ? '' : 'none';
   document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
 }
@@ -1569,7 +1581,8 @@ function applySnapshot(snapshot, options = {}) {
       tolerancePercent: Math.max(0, parseFloat(safeConfig.tolerancePercent) || 20),
       maxOptimizeRetries: Math.min(200, Math.max(1, parseInt(safeConfig.maxOptimizeRetries) || DEFAULT_MAX_OPTIMIZE_RETRIES)),
       autoTransport: !!safeConfig.autoTransport,
-      transportRate: Math.max(0, parseFloat(safeConfig.transportRate) || 0)
+      transportRate: Math.max(0, parseFloat(safeConfig.transportRate) || 0),
+      breakFixedTeams: !!safeConfig.breakFixedTeams
     };
 
     state.people = Array.isArray(snapshot.people)
@@ -3497,6 +3510,226 @@ function applyGuidedRetryPerturbation(results) {
   return true;
 }
 
+function captureAdjustmentSnapshot() {
+  return {
+    groups: captureGroupStateSnapshot(),
+    unassignedIds: (state.unassigned || []).map(person => person.id)
+  };
+}
+
+function applyAdjustmentSnapshot(snapshot) {
+  if (!snapshot) return;
+  applyGroupStateSnapshot(snapshot.groups || []);
+  const unassignedIds = new Set(Array.isArray(snapshot.unassignedIds) ? snapshot.unassignedIds : []);
+  state.unassigned = state.people.filter(person => unassignedIds.has(person.id));
+}
+
+function getMaxUnderDeviation(results) {
+  if (!results || !Array.isArray(results.groupStats) || !results.groupStats.length) return Number.POSITIVE_INFINITY;
+  const under = results.groupStats
+    .filter(group => group.isUnder)
+    .map(group => Math.abs(group.pctDeviation || 0));
+  return under.length ? Math.max(...under) : 0;
+}
+
+function compareResultQuality(candidate, current) {
+  if (!candidate && !current) return 0;
+  if (!candidate) return 1;
+  if (!current) return -1;
+
+  const candidateOutside = countGroupsOutsideTolerance(candidate);
+  const currentOutside = countGroupsOutsideTolerance(current);
+  if (candidateOutside !== currentOutside) return candidateOutside - currentOutside;
+
+  const candidateMaxUnder = getMaxUnderDeviation(candidate);
+  const currentMaxUnder = getMaxUnderDeviation(current);
+  if (Math.abs(candidateMaxUnder - currentMaxUnder) > FLOATING_POINT_EPSILON) {
+    return candidateMaxUnder - currentMaxUnder;
+  }
+
+  if (Math.abs(candidate.cvPct - current.cvPct) > FLOATING_POINT_EPSILON) {
+    return candidate.cvPct - current.cvPct;
+  }
+
+  return Math.abs(candidate.globalAvg) - Math.abs(current.globalAvg);
+}
+
+function tryDirectMachineSwaps(results) {
+  if (!results || !Array.isArray(results.groupStats) || results.groupStats.length < 2) return results;
+
+  const activeGroups = state.groups.filter(group => group.machineId && group.memberIds.length > 0);
+  if (activeGroups.length < 2) return results;
+
+  let bestResults = results;
+  let bestPair = null;
+
+  for (let i = 0; i < activeGroups.length; i++) {
+    for (let j = i + 1; j < activeGroups.length; j++) {
+      const left = activeGroups[i];
+      const right = activeGroups[j];
+      const originalLeft = left.machineId;
+      const originalRight = right.machineId;
+
+      left.machineId = originalRight;
+      right.machineId = originalLeft;
+      const candidate = calculateResults();
+      if (compareResultQuality(candidate, bestResults) < 0) {
+        bestResults = candidate;
+        bestPair = [left.id, right.id];
+      }
+
+      left.machineId = originalLeft;
+      right.machineId = originalRight;
+    }
+  }
+
+  if (!bestPair) return results;
+
+  const left = state.groups.find(group => group.id === bestPair[0]);
+  const right = state.groups.find(group => group.id === bestPair[1]);
+  if (!left || !right) return results;
+
+  [left.machineId, right.machineId] = [right.machineId, left.machineId];
+  return calculateResults();
+}
+
+function pickMemberIdForAdjustment(group, allowBreakFixedTeams) {
+  if (!group) return null;
+
+  const movableMemberId = group.memberIds.find(memberId => {
+    const person = state.people.find(p => p.id === memberId);
+    return person && !normalizeTeamName(person.fixedGroupName);
+  });
+  if (movableMemberId || !allowBreakFixedTeams) return movableMemberId || null;
+
+  return group.memberIds.length ? group.memberIds[group.memberIds.length - 1] : null;
+}
+
+function applyRecommendationPass(results, options = {}) {
+  const { allowBreakFixedTeams = false } = options;
+  const diagnostics = buildBalanceDiagnostics(results);
+  if (!diagnostics.length) return { appliedMoves: 0, diagnostics };
+
+  const groupById = new Map(state.groups.map(group => [group.id, group]));
+  let appliedMoves = 0;
+
+  const receivers = diagnostics
+    .filter(d => d.sizeGap >= 0.75)
+    .sort((a, b) => b.sizeGap - a.sizeGap || b.pctDeviation - a.pctDeviation);
+
+  if (Array.isArray(state.unassigned) && state.unassigned.length) {
+    receivers.forEach(receiver => {
+      const receiverGroup = groupById.get(receiver.group.id);
+      if (!receiverGroup) return;
+
+      const needed = Math.max(0, Math.round(receiver.sizeGap));
+      if (!needed) return;
+
+      const incoming = state.unassigned.splice(0, needed);
+      if (!incoming.length) return;
+
+      receiverGroup.memberIds.push(...incoming.map(person => person.id));
+      receiver.sizeGap -= incoming.length;
+      appliedMoves += incoming.length;
+    });
+  }
+
+  const donors = diagnostics
+    .filter(d => d.sizeGap <= -0.75 && (d.movableMembers > 0 || allowBreakFixedTeams))
+    .sort((a, b) => a.sizeGap - b.sizeGap || a.pctDeviation - b.pctDeviation);
+
+  donors.forEach(donor => {
+    const donorGroup = groupById.get(donor.group.id);
+    if (!donorGroup) return;
+
+    let movableNeeded = Math.max(0, Math.round(Math.abs(donor.sizeGap)));
+    while (movableNeeded > 0) {
+      const receiver = receivers.find(candidate => {
+        if (candidate.group.id === donor.group.id) return false;
+        const receiverGroup = groupById.get(candidate.group.id);
+        return receiverGroup && candidate.sizeGap >= 0.75;
+      });
+      if (!receiver) break;
+
+      const receiverGroup = groupById.get(receiver.group.id);
+      const memberId = pickMemberIdForAdjustment(donorGroup, allowBreakFixedTeams);
+      if (!memberId) break;
+
+      donorGroup.memberIds = donorGroup.memberIds.filter(id => id !== memberId);
+      if (!receiverGroup.memberIds.includes(memberId)) receiverGroup.memberIds.push(memberId);
+      receiver.sizeGap -= 1;
+      movableNeeded--;
+      appliedMoves++;
+    }
+  });
+
+  assignMachinesOptimal();
+  const swappedResults = tryDirectMachineSwaps(calculateResults());
+  return {
+    appliedMoves,
+    diagnostics,
+    results: swappedResults || calculateResults()
+  };
+}
+
+async function autoAdjustFromRecommendations() {
+  readConfig();
+
+  if (!state.results) {
+    await optimize();
+    if (!state.results) return;
+  }
+
+  const diagnostics = buildBalanceDiagnostics(state.results);
+  if (!diagnostics.length) {
+    toast('No hay diagnóstico disponible para autoajustar', 'warning');
+    return;
+  }
+
+  const maxRounds = Math.min(10, Math.max(1, state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES));
+  let bestResults = state.results;
+  let bestSnapshot = captureAdjustmentSnapshot();
+  let totalAppliedMoves = 0;
+  let roundsUsed = 0;
+
+  for (let round = 1; round <= maxRounds; round++) {
+    applyAdjustmentSnapshot(bestSnapshot);
+    const pass = applyRecommendationPass(bestResults, {
+      allowBreakFixedTeams: !!state.config.breakFixedTeams
+    });
+
+    if (!pass.appliedMoves) break;
+
+    roundsUsed = round;
+    totalAppliedMoves += pass.appliedMoves;
+    if (compareResultQuality(pass.results, bestResults) < 0) {
+      bestResults = pass.results;
+      bestSnapshot = captureAdjustmentSnapshot();
+      if (bestResults.isBalanced) break;
+      continue;
+    }
+
+    break;
+  }
+
+  applyAdjustmentSnapshot(bestSnapshot);
+  renderGroups();
+  updateBadges();
+  renderResults(bestResults);
+  switchTab('resultados');
+  scheduleSupabaseAutoSave();
+
+  if (!totalAppliedMoves) {
+    toast('No hubo ajustes automáticos aplicables; revisa si todos los equipos están fijos', 'warning');
+    return;
+  }
+
+  toast(
+    `Autoajuste aplicado en ${roundsUsed} ronda(s): ${totalAppliedMoves} movimiento(s)${state.config.breakFixedTeams ? ' con ruptura de equipos permitida' : ''}.`,
+    'success'
+  );
+}
+
 function updateOptimizeProgress({ running = false, warning = false, success = false, attempt = 0, total = 0, text = '' } = {}) {
   const panel = document.getElementById('opt-progress');
   const iterEl = document.getElementById('opt-progress-iter');
@@ -3904,7 +4137,8 @@ function exportJSON() {
       toleranciaPct: state.config.tolerancePercent,
       maxReintentos: state.config.maxOptimizeRetries,
       transporteAutomatico: state.config.autoTransport,
-      tasaTransporte: state.config.transportRate
+      tasaTransporte: state.config.transportRate,
+      romperEquiposFijos: !!state.config.breakFixedTeams
     },
     personas: state.people.map(p => ({
       nombre: p.name,
@@ -3953,6 +4187,7 @@ function importConfigJSON(file) {
       if (cfg.maxReintentos      != null) document.getElementById('cfg-maxRetries').value      = cfg.maxReintentos;
       if (cfg.transporteAutomatico != null) document.getElementById('cfg-autoTransport').checked = cfg.transporteAutomatico;
       if (cfg.tasaTransporte     != null) document.getElementById('cfg-transportRate').value   = cfg.tasaTransporte;
+      if (cfg.romperEquiposFijos != null) document.getElementById('cfg-breakFixedTeams').checked = cfg.romperEquiposFijos;
       readConfig();
 
       // Load people — supports both canonical field names (version 2: nombre/equipo)
@@ -4113,7 +4348,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     scheduleSupabaseAutoSave();
   });
 
-  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance', 'cfg-maxRetries'].forEach(id => {
+  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance', 'cfg-maxRetries', 'cfg-breakFixedTeams'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
       readConfig();
       renderGroupsPreview();
@@ -4189,6 +4424,7 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Acción principal: optimizar --- */
   document.getElementById('btn-optimize').addEventListener('click', optimize);
+  document.getElementById('btn-auto-adjust').addEventListener('click', autoAdjustFromRecommendations);
 
   /* --- Exportar --- */
   document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
