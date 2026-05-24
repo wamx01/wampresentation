@@ -1130,6 +1130,9 @@
        ================================================================== -->
   <div id="tab-resultados" class="tab-content card">
     <h2>📊 Resultados</h2>
+    <div class="form-row mb-1">
+      <button class="btn btn-secondary" id="btn-export-results-pdf-inline">📄 Exportar resultados PDF</button>
+    </div>
     <div id="results-container">
       <div class="empty-state">
         <span class="ei">📊</span>
@@ -4142,6 +4145,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   /* --- Exportar --- */
   document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
   document.getElementById('btn-export-results-pdf').addEventListener('click', exportResultsPDF);
+  document.getElementById('btn-export-results-pdf-inline').addEventListener('click', exportResultsPDF);
   document.getElementById('btn-export-teams-csv').addEventListener('click', exportTeamsCSV);
   document.getElementById('btn-export-teams-pdf').addEventListener('click', exportTeamsPDF);
   document.getElementById('btn-export-json').addEventListener('click', exportJSON);
