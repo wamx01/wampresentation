@@ -897,14 +897,6 @@
         <input type="number" id="cfg-transportRate" value="10" min="0" max="100" placeholder="%" style="margin-top:.3rem">
       </div>
 
-      <div class="form-group">
-        <label>Ajustes avanzados</label>
-        <label class="cfg-checkbox">
-          <input type="checkbox" id="cfg-breakFixedTeams">
-          <span style="font-size:.78rem">Permitir romper equipos fijos como último recurso</span>
-        </label>
-      </div>
-
     </div>
 
     <div class="supabase-panel" id="sb-panel">
@@ -1153,7 +1145,6 @@
      ================================================================== -->
 <div class="action-bar">
   <button class="btn btn-success btn-lg" id="btn-optimize">⚖️ Balancear / Optimizar Reparto</button>
-  <button class="btn btn-secondary"      id="btn-auto-adjust">🪄 Autoajustar recomendaciones</button>
   <div class="opt-progress" id="opt-progress" aria-live="polite" aria-atomic="true">
     <span class="opt-spinner" aria-hidden="true"></span>
     <div class="opt-progress-meta">
@@ -1184,6 +1175,7 @@
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf@2.5.1/dist/jspdf.umd.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/jspdf-autotable@3.8.2/dist/jspdf.plugin.autotable.min.js"></script>
+<script src="./machine-assignment-service.js"></script>
 <script>
 /* ======================================================================
    REPARTICIÓN EQUITATIVA DE MÁQUINAS — lógica completa
@@ -1479,8 +1471,7 @@ const state = {
     tolerancePercent: 20,
     maxOptimizeRetries: 3,
     autoTransport:   false,
-    transportRate:   10,  // % del costo base
-    breakFixedTeams: false
+    transportRate:   10  // % del costo base
   },
   mode: 'auto'  // 'auto' | 'manual'
 };
@@ -1518,7 +1509,6 @@ function readConfig() {
   state.config.maxOptimizeRetries = Math.min(200, Math.max(1, parseInt(document.getElementById('cfg-maxRetries').value) || DEFAULT_MAX_OPTIMIZE_RETRIES));
   state.config.autoTransport    = document.getElementById('cfg-autoTransport').checked;
   state.config.transportRate    = Math.max(0, parseFloat(document.getElementById('cfg-transportRate').value) || 0);
-  state.config.breakFixedTeams  = document.getElementById('cfg-breakFixedTeams').checked;
   state.mode                    = document.getElementById('cfg-mode').value;
 }
 
@@ -1532,7 +1522,6 @@ function syncConfigToDom() {
   document.getElementById('cfg-maxRetries').value = state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES;
   document.getElementById('cfg-autoTransport').checked = state.config.autoTransport;
   document.getElementById('cfg-transportRate').value = state.config.transportRate;
-  document.getElementById('cfg-breakFixedTeams').checked = !!state.config.breakFixedTeams;
   document.getElementById('grupos-auto-panel').style.display = state.mode === 'auto' ? '' : 'none';
   document.getElementById('grupos-manual-panel').style.display = state.mode === 'manual' ? '' : 'none';
 }
@@ -1582,8 +1571,7 @@ function applySnapshot(snapshot, options = {}) {
       tolerancePercent: Math.max(0, parseFloat(safeConfig.tolerancePercent) || 20),
       maxOptimizeRetries: Math.min(200, Math.max(1, parseInt(safeConfig.maxOptimizeRetries) || DEFAULT_MAX_OPTIMIZE_RETRIES)),
       autoTransport: !!safeConfig.autoTransport,
-      transportRate: Math.max(0, parseFloat(safeConfig.transportRate) || 0),
-      breakFixedTeams: !!safeConfig.breakFixedTeams
+      transportRate: Math.max(0, parseFloat(safeConfig.transportRate) || 0)
     };
 
     state.people = Array.isArray(snapshot.people)
@@ -2131,29 +2119,24 @@ function renderMachines() {
 /*  GRUPOS                                                             */
 /* ------------------------------------------------------------------ */
 
-function buildMachineQuotaPlan(totalPeople) {
+function buildMachineAssignmentPlan(fixedTeams, freePeopleCount) {
   readConfig();
-  const { minGroupSize, absMaxGroupSize, numGroups: cfgN } = state.config;
+  const { absMaxGroupSize, numGroups: cfgN } = state.config;
   const machineLimit = cfgN > 0 ? Math.min(cfgN, state.machines.length) : state.machines.length;
-  const machines = [...state.machines]
-    .slice(0, machineLimit)
-    .sort((a, b) => totalCost(b) - totalCost(a));
-
-  if (!machines.length) return [];
-
-  const targetSizes = totalPeople > 0
-    ? computeProportionalSizes(
-        machines.map(machine => totalCost(machine)),
-        totalPeople,
-        Math.min(minGroupSize, Math.max(1, totalPeople)),
-        absMaxGroupSize
-      )
-    : new Array(machines.length).fill(0);
-
-  return machines.map((machine, index) => ({
-    machine,
-    targetSize: targetSizes[index] || 0
-  }));
+  return window.MachineAssignmentService.buildMachineAssignmentPlan({
+    machines: state.machines.slice(0, machineLimit).map(machine => ({
+      id: machine.id,
+      name: machine.name,
+      netValue: totalCost(machine)
+    })),
+    teamBlocks: fixedTeams.map(team => ({
+      id: team.id,
+      name: team.displayName,
+      size: team.people.length
+    })),
+    freePeopleCount,
+    absMaxGroupSize
+  });
 }
 
 /**
@@ -2172,14 +2155,18 @@ function autoCreateGroups() {
 
   if (!state.machines.length) { toast('Agrega al menos una máquina', 'error'); return false; }
   if (!state.people.length)   { toast('Agrega personas primero', 'error');     return false; }
+  if (!window.MachineAssignmentService) {
+    toast('No se pudo cargar el servicio de asignación de máquinas', 'error');
+    return false;
+  }
 
   // ── Separate people into pre-assigned (fixed) and free ──────────────────
-  const fixedMap = new Map(); // normalised key → { displayName, people[] }
+  const fixedMap = new Map(); // normalised key → { id, displayName, people[] }
   const freePeople = [];
   state.people.forEach(p => {
     if (p.fixedGroupName && p.fixedGroupName.trim()) {
       const key = p.fixedGroupName.trim().toLowerCase();
-      if (!fixedMap.has(key)) fixedMap.set(key, { displayName: p.fixedGroupName.trim(), people: [] });
+      if (!fixedMap.has(key)) fixedMap.set(key, { id: key, displayName: p.fixedGroupName.trim(), people: [] });
       fixedMap.get(key).people.push(p);
     } else {
       freePeople.push(p);
@@ -2189,7 +2176,8 @@ function autoCreateGroups() {
   const fixedTeams = [...fixedMap.values()]
     .sort((a, b) => b.people.length - a.people.length || a.displayName.localeCompare(b.displayName, 'es', { sensitivity: 'base' }));
   state.unassigned = [];
-  const machinePlan = buildMachineQuotaPlan(state.people.length);
+  const assignmentPlan = buildMachineAssignmentPlan(fixedTeams, freePeople.length);
+  const machinePlan = assignmentPlan.slots || [];
   if (!machinePlan.length) return false;
 
   if (absMaxGroupSize > 0) {
@@ -2202,71 +2190,29 @@ function autoCreateGroups() {
     }
   }
 
-  state.groups = machinePlan.map((slot, index) => ({
-    id: uid(),
-    name: `Grupo ${index + 1}`,
-    memberIds: [],
-    machineId: slot.machine.id,
-    targetSize: slot.targetSize
-  }));
-
-  const pickBestGroupIndex = (incomingSize) => {
-    const candidates = state.groups
-      .map((group, index) => {
-        const targetSize = machinePlan[index].targetSize;
-        const currentSize = group.memberIds.length;
-        const nextSize = currentSize + incomingSize;
-        const hardOverflow = absMaxGroupSize > 0 && nextSize > absMaxGroupSize;
-        return {
-          index,
-          currentSize,
-          targetSize,
-          remaining: targetSize - currentSize,
-          overflow: Math.max(0, nextSize - targetSize),
-          hardOverflow
-        };
-      })
-      .filter(candidate => !candidate.hardOverflow)
-      .sort((a, b) => {
-        const aFits = a.remaining >= incomingSize ? 0 : 1;
-        const bFits = b.remaining >= incomingSize ? 0 : 1;
-        if (aFits !== bFits) return aFits - bFits;
-        if (a.overflow !== b.overflow) return a.overflow - b.overflow;
-        if (a.remaining !== b.remaining) return b.remaining - a.remaining;
-        return a.currentSize - b.currentSize;
-      });
-
-    if (candidates.length) return candidates[0].index;
-
-    return state.groups
-      .map((group, index) => ({ index, size: group.memberIds.length }))
-      .sort((a, b) => a.size - b.size || a.index - b.index)[0]?.index ?? 0;
-  };
-
-  fixedTeams.forEach(team => {
-    const groupIndex = pickBestGroupIndex(team.people.length);
-    state.groups[groupIndex].memberIds.push(...team.people.map(person => person.id));
-  });
-
+  const teamById = new Map(fixedTeams.map(team => [team.id, team]));
   let freeIndex = 0;
-  state.groups.forEach((group, index) => {
-    const targetSize = machinePlan[index].targetSize;
-    const missing = Math.max(0, targetSize - group.memberIds.length);
-    if (!missing) return;
-    group.memberIds.push(...freePeople.slice(freeIndex, freeIndex + missing).map(person => person.id));
-    freeIndex += missing;
+  state.groups = machinePlan.map((slot, index) => {
+    const assignedTeams = (slot.assignedBlockIds || []).map(teamId => teamById.get(teamId)).filter(Boolean);
+    const memberIds = assignedTeams.flatMap(team => team.people.map(person => person.id));
+    const freeChunk = freePeople.slice(freeIndex, freeIndex + (slot.assignedFreePeopleCount || 0));
+    freeIndex += slot.assignedFreePeopleCount || 0;
+    memberIds.push(...freeChunk.map(person => person.id));
+
+    const assignedNames = assignedTeams.map(team => team.displayName).filter(Boolean);
+    const groupName = assignedNames.length ? assignedNames.join(' + ') : `Grupo ${index + 1}`;
+
+    return {
+      id: uid(),
+      name: groupName,
+      memberIds,
+      machineId: slot.machine.id,
+      targetSize: slot.targetSize
+    };
   });
 
-  while (freeIndex < freePeople.length) {
-    const groupIndex = pickBestGroupIndex(1);
-    const person = freePeople[freeIndex++];
-    if (!person) break;
-    state.groups[groupIndex].memberIds.push(person.id);
-  }
-
-  if (freeIndex < freePeople.length) {
-    state.unassigned = freePeople.slice(freeIndex);
-  }
+  const leftoverFree = assignmentPlan.unassignedFreePeopleCount || 0;
+  state.unassigned = leftoverFree > 0 ? freePeople.slice(freeIndex, freeIndex + leftoverFree) : [];
 
   scheduleSupabaseAutoSave();
   return true;
@@ -2515,13 +2461,14 @@ function findBestMachineAssignment(groupSizes, machineCosts, tolerancePercent) {
         if (compareAssignments(candidate, best) < 0) best = candidate;
         return;
       }
-      for (let i = 0; i < machineCosts.length; i++) {
-        if (used[i]) continue;
-        used[i] = true;
-        selection.push(i);
+
+      for (let machineIdx = 0; machineIdx < machineCosts.length; machineIdx++) {
+        if (used[machineIdx]) continue;
+        used[machineIdx] = true;
+        selection.push(machineIdx);
         search(selection);
         selection.pop();
-        used[i] = false;
+        used[machineIdx] = false;
       }
     }
 
@@ -2587,59 +2534,6 @@ function optimizeGroupSizesIterative(initialSizes, minSizes, maxSizes, machineCo
  * Asigna máquinas comparando tamaño de equipo vs costo de máquina:
  * equipo más grande recibe máquina más costosa, y así sucesivamente.
  */
-
-/**
- * Cuando hay más grupos que máquinas, fusiona los pares de grupos más pequeños
- * hasta que la cantidad de grupos iguale la de máquinas.
- * Respeta absMaxGroupSize: si la fusión supera ese límite, busca el siguiente par.
- * Devuelve true si se realizó al menos una fusión.
- */
-function mergeSmallestGroups() {
-  const nm = state.machines.length;
-  let merged = false;
-  const absMax = state.config.absMaxGroupSize || 999;
-
-  while (state.groups.length > nm) {
-    // Ordenar siempre de menor a mayor tamaño para fusionar los más chicos primero
-    const sorted = [...state.groups]
-      .map((g, idx) => ({ g, idx, size: g.memberIds.length }))
-      .sort((a, b) => a.size - b.size);
-
-    // Buscar el primer par (a, b) cuya suma <= absMax
-    let foundPair = false;
-    for (let a = 0; a < sorted.length && !foundPair; a++) {
-      for (let b = a + 1; b < sorted.length && !foundPair; b++) {
-        const ga = sorted[a].g;
-        const gb = sorted[b].g;
-        if (ga.memberIds.length + gb.memberIds.length <= absMax) {
-          // Fusionar: mover todos los miembros de ga a gb
-          gb.memberIds = [...gb.memberIds, ...ga.memberIds];
-          // Actualizar nombre para reflejar la fusión
-          gb.name = `${gb.name} + ${ga.name}`;
-          // Eliminar ga de state.groups
-          state.groups = state.groups.filter(g => g.id !== ga.id);
-          merged = true;
-          foundPair = true;
-        }
-      }
-    }
-
-    if (!foundPair) {
-      // Ningún par cabe dentro de absMax.
-      // Forzar fusión del par más pequeño y avisar al usuario.
-      const ga = sorted[0].g;
-      const gb = sorted[1].g;
-      const mergedSize = ga.memberIds.length + gb.memberIds.length;
-      toast(`⚠ La fusión de "${gb.name}" + "${ga.name}" resulta en ${mergedSize} personas, superando el máximo absoluto de ${absMax}. Considera aumentar el máximo absoluto en configuración.`, 'warning', 7000);
-      gb.memberIds = [...gb.memberIds, ...ga.memberIds];
-      gb.name = `${gb.name} + ${ga.name}`;
-      state.groups = state.groups.filter(g => g.id !== ga.id);
-      merged = true;
-    }
-  }
-
-  return merged;
-}
 
 function assignMachinesOptimal() {
   const groups   = state.groups;
@@ -2708,32 +2602,6 @@ function assignMachineManual(groupId, machineId) {
   const g = state.groups.find(g => g.id === groupId);
   if (g) g.machineId = machineId || null;
   scheduleSupabaseAutoSave();
-}
-
-function buildTargetGroupSizesFromMachinePool() {
-  const groups = state.groups || [];
-  const machines = state.machines || [];
-  const n = Math.min(groups.length, machines.length);
-  if (!n) return [];
-
-  const activeGroups = groups.slice(0, n);
-  const initialSizes = activeGroups.map(group => group.memberIds.length);
-  const minSizes = activeGroups.map(group => getAdjustmentMinGroupSize(group, false));
-  const maxSizes = activeGroups.map(group => getAdjustmentMaxGroupSize(group));
-  const machineCosts = [...machines]
-    .map(machine => totalCost(machine))
-    .sort((a, b) => b - a)
-    .slice(0, n);
-
-  const optimized = optimizeGroupSizesIterative(
-    initialSizes,
-    minSizes,
-    maxSizes,
-    machineCosts,
-    state.config.tolerancePercent
-  );
-
-  return optimized && Array.isArray(optimized.sizes) ? optimized.sizes : initialSizes;
 }
 
 function removePersonFromGroup(personId) {
@@ -3504,436 +3372,6 @@ function countGroupsOutsideTolerance(results) {
   );
 }
 
-function captureGroupStateSnapshot() {
-  return state.groups.map(g => ({
-    id: g.id,
-    machineId: g.machineId || null,
-    memberIds: [...g.memberIds]
-  }));
-}
-
-function applyGroupStateSnapshot(snapshot) {
-  if (!Array.isArray(snapshot)) return;
-  const byId = new Map(snapshot.map(s => [s.id, s]));
-  state.groups.forEach(g => {
-    const saved = byId.get(g.id);
-    if (!saved) return;
-    g.machineId = saved.machineId || null;
-    g.memberIds = [...saved.memberIds];
-  });
-}
-
-function applyGuidedRetryPerturbation(results) {
-  if (!results || !Array.isArray(results.groupStats) || state.groups.length < 2) return false;
-
-  const diagnostics = buildBalanceDiagnostics(results);
-  const donorDiag = diagnostics
-    .filter(d => d.sizeGap <= -0.75 && d.movableMembers > 0)
-    .sort((a, b) => a.sizeGap - b.sizeGap || a.pctDeviation - b.pctDeviation)[0];
-  const receiverDiag = diagnostics
-    .filter(d => d.group.id !== donorDiag?.group.id && d.sizeGap >= 0.75)
-    .sort((a, b) => b.sizeGap - a.sizeGap || b.pctDeviation - a.pctDeviation)[0];
-
-  if (!donorDiag || !receiverDiag) return false;
-
-  const donorGroup = state.groups.find(g => g.id === donorDiag.group.id);
-  const receiverGroup = state.groups.find(g => g.id === receiverDiag.group.id);
-  if (!donorGroup || !receiverGroup) return false;
-
-  const movableMemberId = donorGroup.memberIds.find(memberId => {
-    const person = state.people.find(p => p.id === memberId);
-    return person && !normalizeTeamName(person.fixedGroupName);
-  });
-
-  if (!movableMemberId) return false;
-
-  donorGroup.memberIds = donorGroup.memberIds.filter(id => id !== movableMemberId);
-  if (!receiverGroup.memberIds.includes(movableMemberId)) receiverGroup.memberIds.push(movableMemberId);
-  return true;
-}
-
-function captureAdjustmentSnapshot() {
-  return {
-    groups: captureGroupStateSnapshot(),
-    unassignedIds: (state.unassigned || []).map(person => person.id)
-  };
-}
-
-function applyAdjustmentSnapshot(snapshot) {
-  if (!snapshot) return;
-  applyGroupStateSnapshot(snapshot.groups || []);
-  const unassignedIds = new Set(Array.isArray(snapshot.unassignedIds) ? snapshot.unassignedIds : []);
-  state.unassigned = state.people.filter(person => unassignedIds.has(person.id));
-}
-
-function getMaxUnderDeviation(results) {
-  if (!results || !Array.isArray(results.groupStats) || !results.groupStats.length) return Number.POSITIVE_INFINITY;
-  const under = results.groupStats
-    .filter(group => group.isUnder)
-    .map(group => Math.abs(group.pctDeviation || 0));
-  return under.length ? Math.max(...under) : 0;
-}
-
-function compareResultQuality(candidate, current) {
-  if (!candidate && !current) return 0;
-  if (!candidate) return 1;
-  if (!current) return -1;
-
-  const candidateOutside = countGroupsOutsideTolerance(candidate);
-  const currentOutside = countGroupsOutsideTolerance(current);
-  if (candidateOutside !== currentOutside) return candidateOutside - currentOutside;
-
-  const candidateMaxUnder = getMaxUnderDeviation(candidate);
-  const currentMaxUnder = getMaxUnderDeviation(current);
-  if (Math.abs(candidateMaxUnder - currentMaxUnder) > FLOATING_POINT_EPSILON) {
-    return candidateMaxUnder - currentMaxUnder;
-  }
-
-  if (Math.abs(candidate.cvPct - current.cvPct) > FLOATING_POINT_EPSILON) {
-    return candidate.cvPct - current.cvPct;
-  }
-
-  if (Math.abs(candidate.globalAvg - current.globalAvg) > FLOATING_POINT_EPSILON) {
-    return current.globalAvg - candidate.globalAvg;
-  }
-
-  return 0;
-}
-
-function tryDirectMachineSwaps(results) {
-  if (!results || !Array.isArray(results.groupStats) || results.groupStats.length < 2) return results;
-
-  const activeGroups = state.groups.filter(group => group.machineId && group.memberIds.length > 0);
-  if (activeGroups.length < 2) return results;
-
-  let bestResults = results;
-  let bestPair = null;
-
-  for (let i = 0; i < activeGroups.length; i++) {
-    for (let j = i + 1; j < activeGroups.length; j++) {
-      const left = activeGroups[i];
-      const right = activeGroups[j];
-      const originalLeft = left.machineId;
-      const originalRight = right.machineId;
-
-      left.machineId = originalRight;
-      right.machineId = originalLeft;
-      const candidate = calculateResults();
-      if (compareResultQuality(candidate, bestResults) < 0) {
-        bestResults = candidate;
-        bestPair = [left.id, right.id];
-      }
-
-      left.machineId = originalLeft;
-      right.machineId = originalRight;
-    }
-  }
-
-  if (!bestPair) return results;
-
-  const left = state.groups.find(group => group.id === bestPair[0]);
-  const right = state.groups.find(group => group.id === bestPair[1]);
-  if (!left || !right) return results;
-
-  [left.machineId, right.machineId] = [right.machineId, left.machineId];
-  return calculateResults();
-}
-
-function getAdjustmentMinGroupSize(group, allowBreakFixedTeams = false) {
-  if (!group) return 0;
-
-  const fixedMembers = group.memberIds.reduce((count, memberId) => {
-    const person = state.people.find(p => p.id === memberId);
-    return count + (normalizeTeamName(person?.fixedGroupName) ? 1 : 0);
-  }, 0);
-
-  if (allowBreakFixedTeams) return group.memberIds.length > 0 ? 1 : 0;
-  return Math.max(group.memberIds.length > 0 ? 1 : 0, fixedMembers);
-}
-
-function getAdjustmentMaxGroupSize(group) {
-  if (!group) return Number.POSITIVE_INFINITY;
-  const absMax = state.config.absMaxGroupSize || 0;
-  return absMax > 0 ? absMax : Number.POSITIVE_INFINITY;
-}
-
-function canGroupReceiveMembers(group, incomingCount) {
-  if (!group || incomingCount <= 0) return false;
-  return (group.memberIds.length + incomingCount) <= getAdjustmentMaxGroupSize(group);
-}
-
-function canGroupDonateMembers(group, outgoingCount, allowBreakFixedTeams = false) {
-  if (!group || outgoingCount <= 0) return false;
-  return (group.memberIds.length - outgoingCount) >= getAdjustmentMinGroupSize(group, allowBreakFixedTeams);
-}
-
-function buildGroupTargetPlan(results, options = {}) {
-  const { allowBreakFixedTeams = false } = options;
-  if (!results || !Array.isArray(results.groupStats) || !results.groupStats.length || !(results.globalAvg > 0)) {
-    return new Map();
-  }
-
-  const rows = results.groupStats.map(stat => {
-    const group = state.groups.find(item => item.id === stat.group.id) || stat.group;
-    const minSize = getAdjustmentMinGroupSize(group, allowBreakFixedTeams);
-    const maxSize = getAdjustmentMaxGroupSize(group);
-    const boundedIdeal = Math.max(minSize, Math.min(maxSize, Math.max(1, stat.idealSize || 1)));
-    const baseTarget = Math.max(minSize, Math.min(maxSize, Math.floor(boundedIdeal)));
-
-    return {
-      groupId: stat.group.id,
-      minSize,
-      maxSize,
-      currentSize: stat.size,
-      idealSize: boundedIdeal,
-      targetSize: baseTarget,
-      frac: boundedIdeal - Math.floor(boundedIdeal)
-    };
-  });
-
-  const totalPeople = rows.reduce((sum, row) => sum + row.currentSize, 0);
-  let allocated = rows.reduce((sum, row) => sum + row.targetSize, 0);
-
-  if (allocated < totalPeople) {
-    const growOrder = [...rows].sort((a, b) => {
-      if (Math.abs(b.frac - a.frac) > FLOATING_POINT_EPSILON) return b.frac - a.frac;
-      return a.targetSize - b.targetSize;
-    });
-
-    let safety = totalPeople * 4;
-    while (allocated < totalPeople && safety-- > 0) {
-      let changed = false;
-      for (const row of growOrder) {
-        if (allocated >= totalPeople) break;
-        if (row.targetSize >= row.maxSize) continue;
-        row.targetSize++;
-        allocated++;
-        changed = true;
-      }
-      if (!changed) break;
-    }
-  } else if (allocated > totalPeople) {
-    const shrinkOrder = [...rows].sort((a, b) => {
-      const aSlack = a.targetSize - a.idealSize;
-      const bSlack = b.targetSize - b.idealSize;
-      if (Math.abs(bSlack - aSlack) > FLOATING_POINT_EPSILON) return bSlack - aSlack;
-      return b.targetSize - a.targetSize;
-    });
-
-    let safety = allocated * 4;
-    while (allocated > totalPeople && safety-- > 0) {
-      let changed = false;
-      for (const row of shrinkOrder) {
-        if (allocated <= totalPeople) break;
-        if (row.targetSize <= row.minSize) continue;
-        row.targetSize--;
-        allocated--;
-        changed = true;
-      }
-      if (!changed) break;
-    }
-  }
-
-  return new Map(rows.map(row => [row.groupId, row]));
-}
-
-function pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeams) {
-  if (!donorGroup || !receiverGroup) return null;
-
-  const movableMemberId = donorGroup.memberIds.find(memberId => {
-    const person = state.people.find(p => p.id === memberId);
-    return person && !normalizeTeamName(person.fixedGroupName);
-  });
-  if (movableMemberId) {
-    if (!canGroupReceiveMembers(receiverGroup, 1) || !canGroupDonateMembers(donorGroup, 1, allowBreakFixedTeams)) return null;
-    return { memberIds: [movableMemberId], breaksFixedTeam: false };
-  }
-
-  if (!allowBreakFixedTeams) return null;
-
-  const fixedTeamBlocks = new Map();
-  donorGroup.memberIds.forEach(memberId => {
-    const person = state.people.find(p => p.id === memberId);
-    const teamName = normalizeTeamName(person?.fixedGroupName);
-    if (!teamName) return;
-    if (!fixedTeamBlocks.has(teamName)) fixedTeamBlocks.set(teamName, []);
-    fixedTeamBlocks.get(teamName).push(memberId);
-  });
-
-  const candidates = [...fixedTeamBlocks.values()]
-    .filter(memberIds => canGroupReceiveMembers(receiverGroup, memberIds.length) && canGroupDonateMembers(donorGroup, memberIds.length, allowBreakFixedTeams))
-    .sort((a, b) => a.length - b.length);
-
-  if (!candidates.length) return null;
-  return {
-    memberIds: [...candidates[0]],
-    breaksFixedTeam: true
-  };
-}
-
-function applyRecommendationPass(results, options = {}) {
-  const { allowBreakFixedTeams = false } = options;
-  const diagnostics = buildBalanceDiagnostics(results);
-  if (!diagnostics.length) return { appliedMoves: 0, diagnostics };
-
-  const groupById = new Map(state.groups.map(group => [group.id, group]));
-  const targetPlan = buildGroupTargetPlan(results, { allowBreakFixedTeams });
-  let appliedMoves = 0;
-
-  const receiverRows = diagnostics
-    .map(diagnostic => {
-      const plan = targetPlan.get(diagnostic.group.id);
-      const currentSize = diagnostic.group.memberIds.length;
-      const targetSize = plan ? plan.targetSize : currentSize;
-      return {
-        ...diagnostic,
-        targetSize,
-        peopleNeeded: Math.max(0, targetSize - currentSize)
-      };
-    })
-    .filter(row => row.peopleNeeded > 0)
-    .sort((a, b) => b.peopleNeeded - a.peopleNeeded || b.pctDeviation - a.pctDeviation);
-
-  if (Array.isArray(state.unassigned) && state.unassigned.length) {
-    receiverRows.forEach(receiver => {
-      const receiverGroup = groupById.get(receiver.group.id);
-      if (!receiverGroup) return;
-
-      const receiverCapacity = getAdjustmentMaxGroupSize(receiverGroup) - receiverGroup.memberIds.length;
-      const needed = Math.min(
-        receiver.peopleNeeded,
-        Math.max(0, receiverCapacity)
-      );
-      if (!needed) return;
-
-      const incoming = state.unassigned.splice(0, needed);
-      if (!incoming.length) return;
-
-      receiverGroup.memberIds.push(...incoming.map(person => person.id));
-      receiver.peopleNeeded = Math.max(0, receiver.peopleNeeded - incoming.length);
-      appliedMoves += incoming.length;
-    });
-  }
-
-  const donorRows = diagnostics
-    .map(diagnostic => {
-      const plan = targetPlan.get(diagnostic.group.id);
-      const currentSize = diagnostic.group.memberIds.length;
-      const targetSize = plan ? plan.targetSize : currentSize;
-      return {
-        ...diagnostic,
-        targetSize,
-        peopleExcess: Math.max(0, currentSize - targetSize)
-      };
-    })
-    .filter(row => row.peopleExcess > 0 && (row.movableMembers > 0 || allowBreakFixedTeams))
-    .sort((a, b) => b.peopleExcess - a.peopleExcess || b.pctDeviation - a.pctDeviation);
-
-  donorRows.forEach(donor => {
-    const donorGroup = groupById.get(donor.group.id);
-    if (!donorGroup) return;
-
-    let movableNeeded = donor.peopleExcess;
-    while (movableNeeded > 0) {
-      let receiver = null;
-      let adjustment = null;
-
-      receiverRows.some(candidate => {
-        if (candidate.group.id === donor.group.id) return false;
-        const receiverGroup = groupById.get(candidate.group.id);
-        if (!receiverGroup || candidate.peopleNeeded <= 0) return false;
-
-        const candidateAdjustment = pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeams);
-        if (!candidateAdjustment || !candidateAdjustment.memberIds.length) return false;
-        if (candidateAdjustment.memberIds.length > candidate.peopleNeeded) return false;
-
-        receiver = candidate;
-        adjustment = candidateAdjustment;
-        return true;
-      });
-      if (!receiver) break;
-
-      const receiverGroup = groupById.get(receiver.group.id);
-      if (!receiverGroup || !adjustment || !adjustment.memberIds.length) break;
-
-      const movingIds = adjustment.memberIds;
-      donorGroup.memberIds = donorGroup.memberIds.filter(id => !movingIds.includes(id));
-      movingIds.forEach(memberId => {
-        if (!receiverGroup.memberIds.includes(memberId)) receiverGroup.memberIds.push(memberId);
-      });
-      receiver.peopleNeeded = Math.max(0, receiver.peopleNeeded - movingIds.length);
-      movableNeeded = Math.max(0, movableNeeded - movingIds.length);
-      appliedMoves += movingIds.length;
-    }
-  });
-
-  assignMachinesOptimal();
-  const swappedResults = tryDirectMachineSwaps(calculateResults());
-  return {
-    appliedMoves,
-    diagnostics,
-    results: swappedResults || calculateResults()
-  };
-}
-
-async function autoAdjustFromRecommendations() {
-  readConfig();
-
-  if (!state.results) {
-    await optimize();
-    if (!state.results) return;
-  }
-
-  const diagnostics = buildBalanceDiagnostics(state.results);
-  if (!diagnostics.length) {
-    toast('No hay diagnóstico disponible para autoajustar', 'warning');
-    return;
-  }
-
-  const maxRounds = Math.min(10, Math.max(1, state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES));
-  let bestResults = state.results;
-  let bestSnapshot = captureAdjustmentSnapshot();
-  let totalAppliedMoves = 0;
-  let roundsUsed = 0;
-
-  for (let round = 1; round <= maxRounds; round++) {
-    applyAdjustmentSnapshot(bestSnapshot);
-    const pass = applyRecommendationPass(bestResults, {
-      allowBreakFixedTeams: !!state.config.breakFixedTeams
-    });
-
-    if (!pass.appliedMoves) break;
-
-    if (compareResultQuality(pass.results, bestResults) < 0) {
-      roundsUsed = round;
-      totalAppliedMoves += pass.appliedMoves;
-      bestResults = pass.results;
-      bestSnapshot = captureAdjustmentSnapshot();
-      if (bestResults.isBalanced) break;
-      continue;
-    }
-
-    break;
-  }
-
-  applyAdjustmentSnapshot(bestSnapshot);
-  renderGroups();
-  updateBadges();
-  renderResults(bestResults);
-  switchTab('resultados');
-  scheduleSupabaseAutoSave();
-
-  if (!totalAppliedMoves) {
-    toast('No hubo ajustes automáticos que mejoraran el reparto respetando las restricciones actuales', 'warning');
-    return;
-  }
-
-  toast(
-    `Autoajuste aplicado en ${roundsUsed} ronda(s): ${totalAppliedMoves} movimiento(s)${state.config.breakFixedTeams ? ' con ruptura de equipos permitida' : ''}.`,
-    'success'
-  );
-}
-
 function updateOptimizeProgress({ running = false, warning = false, success = false, attempt = 0, total = 0, text = '' } = {}) {
   const panel = document.getElementById('opt-progress');
   const iterEl = document.getElementById('opt-progress-iter');
@@ -4285,8 +3723,7 @@ function exportJSON() {
       toleranciaPct: state.config.tolerancePercent,
       maxReintentos: state.config.maxOptimizeRetries,
       transporteAutomatico: state.config.autoTransport,
-      tasaTransporte: state.config.transportRate,
-      romperEquiposFijos: !!state.config.breakFixedTeams
+      tasaTransporte: state.config.transportRate
     },
     personas: state.people.map(p => ({
       nombre: p.name,
@@ -4335,7 +3772,6 @@ function importConfigJSON(file) {
       if (cfg.maxReintentos      != null) document.getElementById('cfg-maxRetries').value      = cfg.maxReintentos;
       if (cfg.transporteAutomatico != null) document.getElementById('cfg-autoTransport').checked = cfg.transporteAutomatico;
       if (cfg.tasaTransporte     != null) document.getElementById('cfg-transportRate').value   = cfg.tasaTransporte;
-      if (cfg.romperEquiposFijos != null) document.getElementById('cfg-breakFixedTeams').checked = cfg.romperEquiposFijos;
       readConfig();
 
       // Load people — supports both canonical field names (version 2: nombre/equipo)
@@ -4496,7 +3932,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     scheduleSupabaseAutoSave();
   });
 
-  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance', 'cfg-maxRetries', 'cfg-breakFixedTeams'].forEach(id => {
+  ['cfg-numGroups', 'cfg-minSize', 'cfg-maxSize', 'cfg-absMax', 'cfg-tolerance', 'cfg-maxRetries'].forEach(id => {
     document.getElementById(id).addEventListener('change', () => {
       readConfig();
       renderGroupsPreview();
@@ -4572,7 +4008,6 @@ document.addEventListener('DOMContentLoaded', async () => {
 
   /* --- Acción principal: optimizar --- */
   document.getElementById('btn-optimize').addEventListener('click', optimize);
-  document.getElementById('btn-auto-adjust').addEventListener('click', autoAdjustFromRecommendations);
 
   /* --- Exportar --- */
   document.getElementById('btn-export-csv').addEventListener('click',  exportCSV);
