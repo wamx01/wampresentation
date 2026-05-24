@@ -3597,9 +3597,16 @@ function tryDirectMachineSwaps(results) {
   return calculateResults();
 }
 
-function getAdjustmentMinGroupSize(group) {
+function getAdjustmentMinGroupSize(group, allowBreakFixedTeams = false) {
   if (!group) return 0;
-  return Math.max(0, state.config.minGroupSize || 0);
+
+  const fixedMembers = group.memberIds.reduce((count, memberId) => {
+    const person = state.people.find(p => p.id === memberId);
+    return count + (normalizeTeamName(person?.fixedGroupName) ? 1 : 0);
+  }, 0);
+
+  if (allowBreakFixedTeams) return group.memberIds.length > 0 ? 1 : 0;
+  return Math.max(group.memberIds.length > 0 ? 1 : 0, fixedMembers);
 }
 
 function getAdjustmentMaxGroupSize(group) {
@@ -3613,9 +3620,79 @@ function canGroupReceiveMembers(group, incomingCount) {
   return (group.memberIds.length + incomingCount) <= getAdjustmentMaxGroupSize(group);
 }
 
-function canGroupDonateMembers(group, outgoingCount) {
+function canGroupDonateMembers(group, outgoingCount, allowBreakFixedTeams = false) {
   if (!group || outgoingCount <= 0) return false;
-  return (group.memberIds.length - outgoingCount) >= getAdjustmentMinGroupSize(group);
+  return (group.memberIds.length - outgoingCount) >= getAdjustmentMinGroupSize(group, allowBreakFixedTeams);
+}
+
+function buildGroupTargetPlan(results, options = {}) {
+  const { allowBreakFixedTeams = false } = options;
+  if (!results || !Array.isArray(results.groupStats) || !results.groupStats.length || !(results.globalAvg > 0)) {
+    return new Map();
+  }
+
+  const rows = results.groupStats.map(stat => {
+    const group = state.groups.find(item => item.id === stat.group.id) || stat.group;
+    const minSize = getAdjustmentMinGroupSize(group, allowBreakFixedTeams);
+    const maxSize = getAdjustmentMaxGroupSize(group);
+    const boundedIdeal = Math.max(minSize, Math.min(maxSize, Math.max(1, stat.idealSize || 1)));
+    const baseTarget = Math.max(minSize, Math.min(maxSize, Math.floor(boundedIdeal)));
+
+    return {
+      groupId: stat.group.id,
+      minSize,
+      maxSize,
+      currentSize: stat.size,
+      idealSize: boundedIdeal,
+      targetSize: baseTarget,
+      frac: boundedIdeal - Math.floor(boundedIdeal)
+    };
+  });
+
+  const totalPeople = rows.reduce((sum, row) => sum + row.currentSize, 0);
+  let allocated = rows.reduce((sum, row) => sum + row.targetSize, 0);
+
+  if (allocated < totalPeople) {
+    const growOrder = [...rows].sort((a, b) => {
+      if (Math.abs(b.frac - a.frac) > FLOATING_POINT_EPSILON) return b.frac - a.frac;
+      return a.targetSize - b.targetSize;
+    });
+
+    let safety = totalPeople * 4;
+    while (allocated < totalPeople && safety-- > 0) {
+      let changed = false;
+      for (const row of growOrder) {
+        if (allocated >= totalPeople) break;
+        if (row.targetSize >= row.maxSize) continue;
+        row.targetSize++;
+        allocated++;
+        changed = true;
+      }
+      if (!changed) break;
+    }
+  } else if (allocated > totalPeople) {
+    const shrinkOrder = [...rows].sort((a, b) => {
+      const aSlack = a.targetSize - a.idealSize;
+      const bSlack = b.targetSize - b.idealSize;
+      if (Math.abs(bSlack - aSlack) > FLOATING_POINT_EPSILON) return bSlack - aSlack;
+      return b.targetSize - a.targetSize;
+    });
+
+    let safety = allocated * 4;
+    while (allocated > totalPeople && safety-- > 0) {
+      let changed = false;
+      for (const row of shrinkOrder) {
+        if (allocated <= totalPeople) break;
+        if (row.targetSize <= row.minSize) continue;
+        row.targetSize--;
+        allocated--;
+        changed = true;
+      }
+      if (!changed) break;
+    }
+  }
+
+  return new Map(rows.map(row => [row.groupId, row]));
 }
 
 function pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeams) {
@@ -3626,7 +3703,7 @@ function pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeam
     return person && !normalizeTeamName(person.fixedGroupName);
   });
   if (movableMemberId) {
-    if (!canGroupReceiveMembers(receiverGroup, 1) || !canGroupDonateMembers(donorGroup, 1)) return null;
+    if (!canGroupReceiveMembers(receiverGroup, 1) || !canGroupDonateMembers(donorGroup, 1, allowBreakFixedTeams)) return null;
     return { memberIds: [movableMemberId], breaksFixedTeam: false };
   }
 
@@ -3642,7 +3719,7 @@ function pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeam
   });
 
   const candidates = [...fixedTeamBlocks.values()]
-    .filter(memberIds => canGroupReceiveMembers(receiverGroup, memberIds.length) && canGroupDonateMembers(donorGroup, memberIds.length))
+    .filter(memberIds => canGroupReceiveMembers(receiverGroup, memberIds.length) && canGroupDonateMembers(donorGroup, memberIds.length, allowBreakFixedTeams))
     .sort((a, b) => a.length - b.length);
 
   if (!candidates.length) return null;
@@ -3658,20 +3735,31 @@ function applyRecommendationPass(results, options = {}) {
   if (!diagnostics.length) return { appliedMoves: 0, diagnostics };
 
   const groupById = new Map(state.groups.map(group => [group.id, group]));
+  const targetPlan = buildGroupTargetPlan(results, { allowBreakFixedTeams });
   let appliedMoves = 0;
 
-  const receivers = diagnostics
-    .filter(d => d.sizeGap >= 0.75)
-    .sort((a, b) => b.sizeGap - a.sizeGap || b.pctDeviation - a.pctDeviation);
+  const receiverRows = diagnostics
+    .map(diagnostic => {
+      const plan = targetPlan.get(diagnostic.group.id);
+      const currentSize = diagnostic.group.memberIds.length;
+      const targetSize = plan ? plan.targetSize : currentSize;
+      return {
+        ...diagnostic,
+        targetSize,
+        peopleNeeded: Math.max(0, targetSize - currentSize)
+      };
+    })
+    .filter(row => row.peopleNeeded > 0)
+    .sort((a, b) => b.peopleNeeded - a.peopleNeeded || b.pctDeviation - a.pctDeviation);
 
   if (Array.isArray(state.unassigned) && state.unassigned.length) {
-    receivers.forEach(receiver => {
+    receiverRows.forEach(receiver => {
       const receiverGroup = groupById.get(receiver.group.id);
       if (!receiverGroup) return;
 
       const receiverCapacity = getAdjustmentMaxGroupSize(receiverGroup) - receiverGroup.memberIds.length;
       const needed = Math.min(
-        Math.max(0, Math.round(receiver.sizeGap)),
+        receiver.peopleNeeded,
         Math.max(0, receiverCapacity)
       );
       if (!needed) return;
@@ -3680,31 +3768,42 @@ function applyRecommendationPass(results, options = {}) {
       if (!incoming.length) return;
 
       receiverGroup.memberIds.push(...incoming.map(person => person.id));
-      receiver.sizeGap -= incoming.length;
+      receiver.peopleNeeded = Math.max(0, receiver.peopleNeeded - incoming.length);
       appliedMoves += incoming.length;
     });
   }
 
-  const donors = diagnostics
-    .filter(d => d.sizeGap <= -0.75 && (d.movableMembers > 0 || allowBreakFixedTeams))
-    .sort((a, b) => a.sizeGap - b.sizeGap || a.pctDeviation - b.pctDeviation);
+  const donorRows = diagnostics
+    .map(diagnostic => {
+      const plan = targetPlan.get(diagnostic.group.id);
+      const currentSize = diagnostic.group.memberIds.length;
+      const targetSize = plan ? plan.targetSize : currentSize;
+      return {
+        ...diagnostic,
+        targetSize,
+        peopleExcess: Math.max(0, currentSize - targetSize)
+      };
+    })
+    .filter(row => row.peopleExcess > 0 && (row.movableMembers > 0 || allowBreakFixedTeams))
+    .sort((a, b) => b.peopleExcess - a.peopleExcess || b.pctDeviation - a.pctDeviation);
 
-  donors.forEach(donor => {
+  donorRows.forEach(donor => {
     const donorGroup = groupById.get(donor.group.id);
     if (!donorGroup) return;
 
-    let movableNeeded = Math.max(0, Math.round(Math.abs(donor.sizeGap)));
+    let movableNeeded = donor.peopleExcess;
     while (movableNeeded > 0) {
       let receiver = null;
       let adjustment = null;
 
-      receivers.some(candidate => {
+      receiverRows.some(candidate => {
         if (candidate.group.id === donor.group.id) return false;
         const receiverGroup = groupById.get(candidate.group.id);
-        if (!receiverGroup || candidate.sizeGap < 0.75) return false;
+        if (!receiverGroup || candidate.peopleNeeded <= 0) return false;
 
         const candidateAdjustment = pickMembersForAdjustment(donorGroup, receiverGroup, allowBreakFixedTeams);
         if (!candidateAdjustment || !candidateAdjustment.memberIds.length) return false;
+        if (candidateAdjustment.memberIds.length > candidate.peopleNeeded) return false;
 
         receiver = candidate;
         adjustment = candidateAdjustment;
@@ -3720,7 +3819,7 @@ function applyRecommendationPass(results, options = {}) {
       movingIds.forEach(memberId => {
         if (!receiverGroup.memberIds.includes(memberId)) receiverGroup.memberIds.push(memberId);
       });
-      receiver.sizeGap -= movingIds.length;
+      receiver.peopleNeeded = Math.max(0, receiver.peopleNeeded - movingIds.length);
       movableNeeded = Math.max(0, movableNeeded - movingIds.length);
       appliedMoves += movingIds.length;
     }
