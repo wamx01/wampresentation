@@ -3820,7 +3820,7 @@ function exportResultsPDF() {
     fmt(s.netValue),
     fmt(s.cpp),
     fmtPct(s.pctDeviation),
-    s.members.map(p => p.name).join(', ')
+    s.members.map(p => p.name).join('\n')
   ]);
 
   doc.autoTable({
@@ -3828,7 +3828,7 @@ function exportResultsPDF() {
     head: [['Grupo', 'Maquina', 'Cupo objetivo', 'Personas', 'Valor neto', 'Ganancia neta/p', 'Desv. %', 'Miembros']],
     body: resultBody,
     theme: 'grid',
-    styles: { fontSize: 8, cellPadding: 4, lineColor: [220, 220, 220], lineWidth: 0.5 },
+    styles: { fontSize: 8, cellPadding: 4, lineColor: [220, 220, 220], lineWidth: 0.5, overflow: 'linebreak', valign: 'top' },
     headStyles: { fillColor: [243, 244, 246], textColor: [55, 65, 81] },
     columnStyles: {
       0: { cellWidth: 90 },
