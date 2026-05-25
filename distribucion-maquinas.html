@@ -1596,6 +1596,8 @@ const MAX_MACHINES_FOR_EXHAUSTIVE_SEARCH = 10;
 const MAX_SIZE_OPTIMIZATION_ITERATIONS = 250;
 const MAX_MACHINE_ASSIGNMENT_SWAP_PASSES = 200;
 const DEFAULT_MAX_OPTIMIZE_RETRIES = 3;
+const PROCESSING_ANIMATION_MAX_MS = 5000;
+const PROCESSING_ANIMATION_STEP_MS = 850;
 
 /** Lee la configuración del DOM hacia state.config */
 function readConfig() {
@@ -3550,6 +3552,24 @@ function updateOptimizeProgress({ running = false, warning = false, success = fa
   textEl.textContent = text || (running ? 'Optimizando reparto...' : 'Listo');
 }
 
+async function playOptimizeProcessingAnimation(totalIterations = 1) {
+  const total = Math.max(1, totalIterations || 1);
+  const startedAt = Date.now();
+  let step = 0;
+
+  while ((Date.now() - startedAt) < PROCESSING_ANIMATION_MAX_MS || step < total) {
+    const dots = '.'.repeat((step % 3) + 1);
+    updateOptimizeProgress({
+      running: true,
+      attempt: Math.min(step + 1, total),
+      total,
+      text: `Procesando reparto${dots}`
+    });
+    step += 1;
+    await new Promise(resolve => setTimeout(resolve, PROCESSING_ANIMATION_STEP_MS));
+  }
+}
+
 function getStructuralImbalanceHints(results) {
   if (!results || !Array.isArray(results.groupStats) || !(results.globalAvg > 0)) return '';
 
@@ -3620,9 +3640,14 @@ async function optimize() {
 
     const ng = state.groups.length;
     const nm = state.machines.length;
+    const visualIterations = state.mode === 'auto'
+      ? Math.max(1, state.config.maxOptimizeRetries || DEFAULT_MAX_OPTIMIZE_RETRIES)
+      : 1;
 
     let results = null;
     let attempts = 1;
+
+    await playOptimizeProcessingAnimation(visualIterations);
 
     if (state.mode === 'auto') {
       results = calculateResults();
